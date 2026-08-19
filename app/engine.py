@@ -1,4 +1,13 @@
-"""DAL HDTransysClassifier 래퍼 — 3단(-1/0/+1) 변형을 weight 공유로 미리 만들어 둔다.
+"""모델 래퍼 — **현재 엔진은 대체(임시) 모델이다.**
+
+붙어 있는 것은 다른 공정용으로 학습된 DAL hdtransys v4_e20 이고, day1 데모 전용 모델이
+따로 준비되면 이 파일이 교체 지점이다. 엔진을 순수 1초 window 분류기로만 쓰기 때문
+(이벤트 집계는 app/counter.py) 교체 시 바꿀 것은 아래 셋뿐이다:
+  ① import·load 하는 classifier  ② predict 가 돌려주는 probs 의 클래스 순서(others=0 전제)
+  ③ config 의 SR/WIN_S/HOP_S 와 판정 문턱 기본값
+화면·조작·연속 카운터 방식은 그대로 간다.
+
+3단(-1/0/+1) 변형을 weight 공유로 미리 만들어 둔다.
 
 predict/embed/finalize 는 전부 engine 스레드(=CycleController)에서만 부른다(직렬화).
 level 변형은 base 의 models 리스트를 그대로 공유하므로 메모리·로딩 추가비용이 없다.

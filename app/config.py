@@ -11,6 +11,8 @@ GOLDEN_EXPECTED = DAL_DIR / "DAL/inference/hdtransys/fixtures/golden_expected.js
 WEIGHTS_DIR = DAL_DIR / "DAL/inference/hdtransys/weights"
 
 # ── 오디오 ──────────────────────────────────────────────────────
+#   주의: 아래 규격은 **대체(임시) 모델**(DAL hdtransys v4_e20)의 것이다.
+#   day1 전용 모델로 교체하면 SR/WIN_S/HOP_S·문턱을 그 모델 기준으로 다시 잡는다.
 SR = 96000                    # 모델 학습 샘플레이트. 다르면 시작을 막는다(리샘플 금지).
 WIN_S, HOP_S = 1.0, 0.2       # manifest 검증값과 일치해야 함
 WIN_N, HOP_N = int(SR * WIN_S), int(SR * HOP_S)
