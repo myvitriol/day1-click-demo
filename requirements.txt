@@ -1,0 +1,5 @@
+# click-1day-demo 런타임 의존성 (엔진 의존성은 ../DAL 의 hdtransys/requirements.txt 가 담당)
+fastapi
+uvicorn[standard]
+sounddevice          # 마이크 캡처 (PortAudio). 파일 소스만 쓰는 개발 서버에서는 없어도 동작.
+numpy

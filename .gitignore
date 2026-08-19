@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+.run.lock
+.lock/
+atlas.json
+sessions/
+sim/

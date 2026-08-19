@@ -1,0 +1,300 @@
+"""엔트리 로직. selftest(headless) 와 serve(uvicorn+WS) 두 모드.
+
+fastapi/uvicorn import 는 serve 안에서만 한다 — selftest 는 torch+DAL 만으로 돈다.
+pause/resume 은 WS 핸들러가 ctrl 의 bool 을 직접 뒤집는다(즉답). 중복 명령은
+무시하지 않고 현재 상태를 재전송해 어긋난 클라이언트를 치유한다.
+"""
+import argparse
+import json
+import queue
+
+from . import config as C
+from .atlas import Atlas
+from .audio import FileSource, RingBuffer, WindowSlicer
+from .cycle import CycleController
+from .engine import Engine
+
+
+def build_args():
+    ap = argparse.ArgumentParser("day1-click-demo")
+    ap.add_argument("--source", choices=["mic", "file"], default="mic",
+                    help="audio source (default: mic)")
+    ap.add_argument("--file", default=str(C.GOLDEN_FLAC),
+                    help="file path for --source file (default: DAL golden fixture)")
+    ap.add_argument("--fast", action="store_true", help="file source without realtime pacing")
+    ap.add_argument("--loop", action="store_true", help="loop the file source")
+    ap.add_argument("--port", type=int, default=C.PORT)
+    ap.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    ap.add_argument("--strictness", type=int, default=C.DEFAULT_LEVEL, choices=list(C.LEVELS))
+    ap.add_argument("--folds", type=int, default=None, help="ensemble folds (default: auto)")
+    ap.add_argument("--device", default=None, help="cuda/mps/cpu (default: auto)")
+    ap.add_argument("--postp", choices=["off", "pair"],
+                    default=("pair" if C.PAIR_POSTP else "off"),
+                    help="pair post-processing (default from config; selftest always uses pair)")
+    ap.add_argument("--selftest", action="store_true",
+                    help="headless: feed golden file, compare final pair, exit 0/1")
+    return ap
+
+
+def make_pipeline(args, emit):
+    ring = RingBuffer(C.RING_S * C.SR)
+    eng = Engine(folds=args.folds, device=args.device,
+                 pair_postp=(args.postp == "pair"))
+    eng.set_level(args.strictness)
+    atlas = Atlas()
+    win_q = queue.Queue(maxsize=C.QUEUE_MAX)
+
+    realtime = not (args.source == "file" and args.fast)
+    ctrl = CycleController(ring, win_q, eng, atlas, emit, realtime=realtime)
+    if args.source == "file":
+        src = FileSource(ring, args.file, fast=args.fast, loop=args.loop, on_error=ctrl.fail)
+    else:
+        from .audio import MicSource, NoSource
+        try:                                   # 기본 장치가 96kHz 로 안 열려도 서버는 뜬다
+            src = MicSource(ring, on_error=ctrl.fail)
+        except Exception as e:
+            print(f"[audio] mic not started: {e}")
+            print("[audio] -> open the page and pick an input from the dropdown")
+            src = NoSource(str(e))
+    slicer = WindowSlicer(ring, win_q, src.eof, on_error=ctrl.fail)
+    ctrl.src, ctrl.slicer = src, slicer        # status() 가 파이프라인 건강을 보고
+    return ring, eng, atlas, ctrl, src, slicer
+
+
+# ── selftest ────────────────────────────────────────────────────
+def selftest(args):
+    args.source, args.fast, args.loop = "file", True, False
+    args.postp = "pair"                        # golden pair 대조는 pair postp 전제
+    events = []
+    ring, eng, atlas, ctrl, src, slicer = make_pipeline(args, events.append)
+    ctrl.auto_pause = False                    # 전 구간 추론 → EOF finalize (golden parity)
+    ctrl.slicer_done = slicer.done
+    src.start(); slicer.start(); ctrl.start()
+    ctrl.join(timeout=180)
+
+    exp = json.loads(C.GOLDEN_EXPECTED.read_text())["cycles"]["ok"]
+    fin = [e for e in events if e["type"] == "eof_final"]
+    if not fin:
+        print("SELFTEST FAIL: no eof_final event")
+        return 1
+    pair = fin[-1]["pair"]
+    got = [round(p["t"], 3) if p else None for p in pair]
+    want = exp["pair"]
+    ok = (got[0] is not None and got[1] is not None
+          and abs(got[0] - want[0]) < 0.011 and abs(got[1] - want[1]) < 0.011
+          and fin[-1]["n_windows"] == exp["n_frames"])
+    print(f"SELFTEST windows={fin[-1]['n_windows']} (expect {exp['n_frames']})  "
+          f"pair={got}  want={want}")
+
+    # 기본 배포 모드(immediate-only) 스모크 — pair 강제 selftest 만으론 off 경로가 무검증 (Codex R7)
+    # 기본 배포 모드(연속 카운터) 스모크 — golden 은 클릭 정확히 2개다
+    off_ok = False
+    try:
+        import torch
+        import torchaudio
+        from .counter import ClickCounter
+        eng2 = Engine(folds=1, pair_postp=False)
+        wav2, _ = torchaudio.load(str(C.GOLDEN_FLAC))
+        x2 = wav2[0].numpy()
+        cnt = ClickCounter()
+        n, ts = 0, []
+        for k in range((len(x2) - C.WIN_N) // C.HOP_N + 1):
+            s0 = k * C.HOP_N
+            o = eng2.clf.predict(torch.from_numpy(x2[s0:s0 + C.WIN_N]))
+            if cnt.push(o["probs"]) is not None:
+                n += 1
+                ts.append(round(k * 0.2 + 0.5, 1))
+        off_ok = (n == 2)
+        print(f"COUNTER smoke: {n} clicks at {ts} (expect 2)  {'OK' if off_ok else 'FAIL'}")
+    except Exception as e:
+        print(f"COUNTER smoke FAIL: {e}")
+    ok = ok and off_ok
+    print("SELFTEST", "PASS" if ok else "FAIL")
+    return 0 if ok else 1
+
+
+# ── serve ───────────────────────────────────────────────────────
+def serve(args):
+    import asyncio  # noqa: F401  (dev_lock/to_thread 에서 사용)
+    import uvicorn
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    loop_holder = {}
+    ui_q = None                                # lifespan 에서 생성
+    clients = set()
+
+    def emit(msg):                             # cycle 스레드 → asyncio
+        lp = loop_holder.get("loop")
+        if lp is not None:
+            lp.call_soon_threadsafe(ui_q.put_nowait, msg)
+
+    ring, eng, atlas, ctrl, src, slicer = make_pipeline(args, emit)
+    from .audio import list_inputs
+    nonlocal_src = {"src": src}                # 장치 전환 시 최신 소스 추적
+    dev_lock = asyncio.Lock()                  # 전환 직렬화 (PortAudio 호출은 스레드로)
+
+    app = FastAPI()
+    app.mount("/assets", StaticFiles(directory=C.REPO / "web/assets"), name="assets")
+
+    @app.get("/")
+    def index():
+        return FileResponse(C.REPO / "web/index.html")
+
+    async def broadcaster():
+        while True:
+            try:
+                msg = await ui_q.get()
+                try:
+                    txt = json.dumps(msg, default=float)
+                except Exception as e:
+                    print(f"[ws] dropped unserializable message type={msg.get('type')}: {e}")
+                    continue
+                for ws in list(clients):
+                    try:
+                        await ws.send_text(txt)
+                    except Exception:
+                        clients.discard(ws)
+            except Exception as e:             # 이 task 는 절대 죽으면 안 된다
+                print(f"[ws] broadcaster error: {e}")
+
+    async def streamer():
+        """10Hz 화면 스트림. 정지 중에도 status 는 10Hz — 상태가 늦게 도는 일이 없게."""
+        seq = 0
+        last = 0
+        from .cycle import pack_spec, spec_rows
+        while True:
+            try:
+                await asyncio.sleep(1 / C.STREAM_HZ)
+                w = ring.write_idx
+                n = w - last
+                last = w                       # 정지 중에도 전진 — 재개는 live edge 부터
+                seq += 1
+                if ctrl.paused:
+                    await ui_q.put({"type": "stream", "seq": seq, "env": None,
+                                    "spec": None, "status": ctrl.status()})
+                    continue
+                if n <= 0:
+                    continue
+                n = min(n, C.SR)
+                seg = ring.read_at(w - n, n)
+                if seg is None:
+                    continue
+                k = max(1, n // 20)
+                env = [[round(float(seg[i:i + k].min()), 4), round(float(seg[i:i + k].max()), 4)]
+                       for i in range(0, len(seg) - k + 1, k)][:20]
+                spec = None
+                if n >= C.DISP_NFFT and ctrl.spec_floor is not None:
+                    spec = pack_spec(spec_rows(seg) - ctrl.spec_floor[:, None])
+                await ui_q.put({"type": "stream", "seq": seq, "env": env, "spec": spec,
+                                "status": ctrl.status()})
+            except Exception as e:
+                print(f"[ws] streamer error: {e}")
+
+    def hello_payload():
+        cur = nonlocal_src["src"]
+        return {"type": "hello", "sr": C.SR, "device": cur.info(),
+                "inputs": (list_inputs() if args.source == "mic" else []),
+                "source_kind": cur.info().get("kind"),
+                "postp": args.postp,
+                "model": {"version": eng.version, "folds": eng.folds,
+                          "p95_ms": round(eng.p95_ms, 1)},
+                "levels": {str(k): C.LEVEL_NAMES[k] for k in C.LEVELS},
+                "level": eng.level, "hop": C.HOP_S,
+                "paused": ctrl.paused, "detect_on": ctrl.detect_on,
+                "counter": ctrl.counter.state(),
+                "last_freeze": ctrl.last_freeze,
+                "click_total": ctrl.click_total, "count_rev": ctrl.count_rev,
+                "atlas": atlas.hello_payload()}
+
+    @app.websocket("/ws")
+    async def ws_ep(ws: WebSocket):
+        await ws.accept()
+        clients.add(ws)
+        await ws.send_text(json.dumps(hello_payload(), default=float))
+        try:
+            while True:
+                m = json.loads(await ws.receive_text())
+                cmd = m.get("cmd")
+                if cmd == "pause":
+                    ctrl.pause_now()
+                    # 항상 즉시 ACK(방송) — 첫 pause 든 중복이든 현재 상태가 진실
+                    await ui_q.put({"type": "paused", "rev": ctrl.rev})
+                    if ctrl.last_freeze is not None:
+                        await ws.send_text(json.dumps(ctrl.last_freeze, default=float))
+                elif cmd == "resume":
+                    ctrl.resume_now()
+                    await ui_q.put({"type": "resume", "rev": ctrl.rev})
+                elif cmd == "detect":
+                    ctrl.detect_now(bool(m.get("on", True)))
+                    await ui_q.put({"type": "detect", "on": ctrl.detect_on})
+                elif cmd == "reset_count":
+                    ctrl.reset_count_now()
+                    await ui_q.put({"type": "count", "click_total": ctrl.click_total,
+                                    "count_rev": ctrl.count_rev})
+                elif cmd == "dial":
+                    ctrl.req_dial(int(m.get("level", 0)))
+                elif cmd == "device" and args.source == "mic":
+                    idx = int(m.get("index", -1))
+
+                    def _swap(old, want):
+                        # 생성 실패 → old 유지. old 정지 후 start 실패 → old 로 복귀 시도.
+                        from .audio import MicSource, NoSource
+                        new = MicSource(ring, on_error=ctrl.fail, device=want)  # 미시작
+                        old_idx = old.info().get("index", -1)
+                        old.stop()
+                        try:
+                            new.start()
+                            return new
+                        except Exception:
+                            try:
+                                new.stop()
+                            except Exception:
+                                pass
+                            if old_idx is not None and old_idx >= 0:
+                                back = MicSource(ring, on_error=ctrl.fail, device=old_idx)
+                                back.start()
+                                ctrl.src = back
+                                nonlocal_src["src"] = back
+                            raise RuntimeError("new device failed; previous input restored")
+
+                    async with dev_lock:
+                        old = nonlocal_src["src"]
+                        try:
+                            new = await asyncio.to_thread(_swap, old, idx)
+                            nonlocal_src["src"] = new
+                            ctrl.src = new
+                            ctrl.req_source_switch()   # 섞인 구간 폐기 + 새 기준
+                            await ui_q.put({"type": "device", "device": new.info(),
+                                            "inputs": list_inputs()})
+                        except Exception as e:
+                            await ui_q.put({"type": "error",
+                                            "msg": f"input switch failed: {e}"})
+                            cur = nonlocal_src["src"]
+                            await ui_q.put({"type": "device", "device": cur.info(),
+                                            "inputs": list_inputs()})
+        except WebSocketDisconnect:
+            clients.discard(ws)
+
+    @app.on_event("startup")
+    async def _startup():
+        nonlocal ui_q
+        loop_holder["loop"] = asyncio.get_running_loop()
+        ui_q = asyncio.Queue(maxsize=1000)
+        src.start(); slicer.start(); ctrl.start()
+        asyncio.create_task(broadcaster())
+        asyncio.create_task(streamer())
+        if not args.no_browser:
+            import webbrowser
+            webbrowser.open(f"http://{C.HOST}:{args.port}/")
+
+    print(f"[serve] http://{C.HOST}:{args.port}/  (source={args.source})")
+    uvicorn.run(app, host=C.HOST, port=args.port, log_level="warning")
+
+
+def main(argv=None):
+    args = build_args().parse_args(argv)
+    if args.selftest:
+        raise SystemExit(selftest(args))
+    serve(args)
