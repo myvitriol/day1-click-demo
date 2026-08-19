@@ -37,6 +37,21 @@ def wav_b64(seg: np.ndarray) -> str:
     return base64.b64encode(bio.getvalue()).decode()
 
 
+def click_onset(w: np.ndarray) -> int:
+    """window 안에서 클릭이 시작된 sample 위치. 짧은 창 RMS 의 증가폭이 가장 큰 지점.
+
+    window 중심을 이벤트 시각으로 쓰면 클릭이 window 어디에 있든 같은 값이 나와서
+    화면이 실제 소리와 어긋난다 — min_on=1 에서는 클릭이 window 뒤쪽에 처음 들어온
+    순간에 발생하므로 특히 크게 벌어진다. golden 실측(정답 8.10 / 10.30s):
+      window 중심 오차 0.600s · 절대 peak 0.351s · RMS peak 0.418s · **이 방법 0.174s**
+    "배경의 N배" 같은 절대 문턱은 못 쓴다 — soft click 은 배경보다 9~15 dB 밖에
+    높지 않아(golden 실측) 문턱을 넘는 구간이 잡히지 않는다.
+    """
+    n = 480                                    # 5ms
+    r = np.sqrt(np.convolve(w * w, np.ones(n, np.float32) / n, mode="same") + 1e-12)
+    return int(np.argmax(np.diff(r)))
+
+
 def spec_rows(seg: np.ndarray, hop: int = None) -> np.ndarray:
     """표시 전용 log-magnitude STFT → [DISP_BINS, cols] dB (저→고).
 
@@ -108,6 +123,7 @@ class CycleController(threading.Thread):
         self._first_start = None
         self._pending_snap = None              # (target_sample, info{..., epoch})
         self.last_freeze = None
+        self._ew0 = self._seg0 = 0             # CAM 정렬용 (snapshot 마다 갱신)
         self.click_total = 0
         self.count_rev = 0                     # 카운터 세대 (리셋마다 +1)
         self.eof_result = None
@@ -232,12 +248,15 @@ class CycleController(threading.Thread):
                 if ev is not None:
                     self.click_total += 1
                     if self.auto_pause and self._pending_snap is None:
-                        t_abs = start + C.WIN_N // 2          # 이 window 의 중심
+                        # 표시 기준 시각은 window 중심이 아니라 **소리가 시작된 지점**이다
+                        t_abs = start + click_onset(w)
                         self._pending_snap = (t_abs + int(C.SNAP_POST_S * C.SR),
                                               {"ev": {"label": SPEC.label(ev["cls"]),
                                                       "t": 0.0, "score": round(ev["score"], 4)},
                                                "cls": ev["cls"],     # CAM 대상 — 표시 이름과 분리
-                                               "t_abs": t_abs, "pair": [None, None],
+                                               "t_abs": t_abs,
+                                               "win_start": start,   # 모델이 실제로 본 window
+                                               "pair": [None, None],
                                                "epoch": self.epoch})
                     else:                      # 자동정지 안 하는 모드 → 카운터만 알린다
                         self.emit({"type": "count", "click_total": self.click_total,
@@ -326,11 +345,15 @@ class CycleController(threading.Thread):
                        "n_windows": self._n_pred})
 
     # ── snapshot ────────────────────────────────────────────────
-    def _snap_common(self, t_abs):
+    def _snap_common(self, t_abs, win_start=None):
         s0 = max(0, t_abs - int(C.SNAP_PRE_S * C.SR))
         seg = self.ring.read_at(s0, int((C.SNAP_PRE_S + C.SNAP_POST_S) * C.SR))
-        e0 = max(0, t_abs - C.WIN_N // 2)
-        ew = self.ring.read_at(e0, C.WIN_N)    # 검출 트리거/피크 window (이벤트 t 가 중심)
+        # CAM 은 **모델이 실제로 판정한 window** 를 설명해야 한다. 그래서 트리거 window
+        # 의 시작을 그대로 쓴다(없으면 t_abs 중심으로 폴백).
+        e0 = max(0, win_start if win_start is not None else t_abs - C.WIN_N // 2)
+        ew = self.ring.read_at(e0, C.WIN_N)
+        self._ew0 = e0                         # CAM 정렬용 (seg 기준 offset 계산)
+        self._seg0 = s0
         if seg is None or ew is None:
             return None
         if self.eng.embed_ok:
@@ -353,7 +376,7 @@ class CycleController(threading.Thread):
         if info["epoch"] != self.epoch:        # resume/dial 이 끼어듦 — 이 검출은 지난 세대
             return
         try:
-            got = self._snap_common(info["t_abs"])
+            got = self._snap_common(info["t_abs"], info.get("win_start"))
         except Exception:
             got = None
         if got is None:
@@ -362,15 +385,22 @@ class CycleController(threading.Thread):
         seg, ew, mp, snr = got
         spec = disp_spec(seg, self.spec_floor, C.SNAP_HOP)
         # CAM 은 표시 구간(seg)이 아니라 **검출 트리거 window(ew)** 를 설명한다(Codex R5).
-        # ew=[t-0.5,t+0.5] → 표시 seg=[t-0.25,t+0.75]: 왼쪽 0.25 는 표시 밖, 오른쪽 0.25 는 비운다.
+        # 두 구간의 시작이 다르므로 sample 차이를 그대로 열 수로 환산해 옮긴다 — 예전에는
+        # 0.25*cols 로 못박아 뒀는데, 이벤트 시각을 onset 으로 바꾼 뒤로는 그 값이 맞지 않는다.
         cam = None
         cls = info.get("cls")                  # 표시 이름(display_names)에서 역파싱하지 않는다
         if cls is not None:
             u8 = self.eng.cam(ew, cls, spec["cols"])
             if u8 is not None:
-                shift = int(round(0.25 * spec["cols"]))
+                cols = u8.shape[1]
+                off = int(round((self._ew0 - self._seg0) / len(seg) * cols))
                 grid = np.zeros_like(u8)
-                grid[:, :u8.shape[1] - shift] = u8[:, shift:]
+                if off >= 0:
+                    if off < cols:
+                        grid[:, off:] = u8[:, :cols - off]
+                else:
+                    if -off < cols:
+                        grid[:, :cols + off] = u8[:, -off:]
                 cam = {"b64": base64.b64encode(grid.tobytes()).decode(),
                        "rows": int(grid.shape[0]), "cols": int(grid.shape[1])}
         if info["epoch"] != self.epoch:        # 무거운 일 동안 resume/dial 개입 — 폐기(Codex R5)

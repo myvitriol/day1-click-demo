@@ -242,6 +242,8 @@ def serve(args):
     def hello_payload():
         cur = nonlocal_src["src"]
         return {"type": "hello", "sr": C.SR, "build": BUILD_ID, "device": cur.info(),
+                "snap": {"pre_s": C.SNAP_PRE_S, "post_s": C.SNAP_POST_S,
+                         "pre_frac": C.SNAP_PRE_S / (C.SNAP_PRE_S + C.SNAP_POST_S)},
                 "inputs": (list_inputs() if args.source == "mic" else []),
                 "source_kind": cur.info().get("kind"),
                 "postp": args.postp,

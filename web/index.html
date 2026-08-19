@@ -253,7 +253,8 @@ function virRGB(v,o,a){const x=Math.max(0,Math.min(.9999,v))*31,i=x|0,f=x-i,
 /* lag = 배열 끝에서 화면 오른쪽 끝까지의 거리(프레임, 소수). 렌더 루프가 줄이고
    데이터 도착이 늘린다. xf = 전환 crossfade 상태, fzGain = 정지 파형 배율. */
 const S={env:[],spec:[],ambient:[],stars:[],atlas:null,level:0,frozen:false,manual:false,
-  lag:30,vel:100,xf:null,fzGain:1,build:null,fzUrl:null,
+  lag:30,vel:100,xf:null,fzGain:1,build:null,fzSpan:null,
+  snap:{pre_s:0.5,post_s:0.5,pre_frac:0.5},   /* hello 가 덮어쓴다 */fzUrl:null,
          detect:true,rev:0,countRev:0,lastToggle:0,fzBuf:null,fzSpec:null,gain:12,
          floorLin:0.01,conn:false,sep:0};
 /* 서버 rev 보다 낡은 상태 메시지는 버린다 — in-flight 역전 차단 */
@@ -312,6 +313,7 @@ const H={
     $("devSub").textContent=
       `${(m.sr/1000)|0} kHz · ${m.device.channels}ch · ${m.model.version} · `+
       `${m.model.folds}-fold · p95 ${m.model.p95_ms}ms`;
+    if(m.snap) S.snap=m.snap;          /* 검출 시점이 표시 구간의 어디인가 */
     S.atlas=m.atlas; S.level=m.level;
     $("cnt").textContent=m.click_total;
     $("atlasNote").textContent = m.atlas.fixed
@@ -389,6 +391,7 @@ const H={
     }
     S.fzSpec=decodeSpec(m.spec);
     S.fzCam=(m.cam&&!m.manual)?decodeSpec(m.cam):null;
+    S.fzSpan=camSpan(S.fzCam);        /* 파형·스펙트로그램이 같은 시간 범위를 쓴다 */
     S.fzBuf=null;S.fzSnr=m.snr_db;
     /* 스펙트로그램과 파형(WAV 비동기 decode)이 **둘 다** 준비된 뒤에 한 번만 전환한다.
        예전에는 spec 이 즉시 바뀌고 파형은 "준비 중…" → 완성본으로 다시 튀어 두 번
@@ -520,13 +523,29 @@ function snapCanvas(o){
   c.width=o.c.width;c.height=o.c.height;
   c.getContext("2d").drawImage(o.c,0,0);
   return c;}
+/* CAM 이 판정에 기여했다고 본 **시간 범위** → 표시 구간 상대값 [0,1].
+   파형의 붉은 표시와 스펙트로그램의 점선 박스가 같은 값을 쓰므로 두 패널이 정확히
+   대응한다. 예전에는 파형에 20~58% 를 못박아 칠했는데 그 범위는 근거가 없었다.
+   (소리 크기로 구간을 잡는 방법은 못 쓴다 — soft click 은 배경보다 9~15 dB 밖에
+   높지 않아 문턱을 넘는 구간이 잡히지 않는다. golden 실측) */
+function camSpan(cam){
+  if(!cam||!cam.length) return null;
+  const cols=cam.length, rows=cam[0].length;
+  let hi=1;
+  for(let c=0;c<cols;c++)for(let r=0;r<rows;r++)if(cam[c][r]>hi)hi=cam[c][r];
+  const TH=hi*0.55;
+  let x0=1e9,x1=-1;
+  for(let c=0;c<cols;c++){const col=cam[c];
+    for(let r=0;r<rows;r++) if(col[r]>=TH){ if(c<x0)x0=c; if(c>x1)x1=c; break; }}
+  return x1>=0 ? [x0/cols,(x1+1)/cols] : null;
+}
 function setSpecTag(t){const e=$("specTag");e.textContent=t;e.classList.add("frz");}
 function hideFreeze(){
   const e=$("specTag");e.textContent="파형과 같은 시간 흐름";e.classList.remove("frz");
   $("fzPlay").disabled=true; paintPlayBtn(false);
   try{AEL.pause();}catch(_){}
   if(S.fzUrl){URL.revokeObjectURL(S.fzUrl);S.fzUrl=null;}
-  S.fzBuf=null;S.fzSpec=null;S.fzCam=null;}
+  S.fzBuf=null;S.fzSpec=null;S.fzCam=null;S.fzSpan=null;}
 function badge(){const b=$("badge");
   if(S.frozen&&!S.manual){b.className="badge frz";b.textContent="클릭 검출 — 재생을 눌러 계속";}
   else if(S.frozen){b.className="badge man";b.textContent="정지 — 재생을 누르면 이어집니다";}
@@ -598,21 +617,29 @@ function drawFreezeWave(){
      setFrozen 에서 S.gain 을 물려받음)에서 출발해 렌더 루프가 목표로 서서히 옮긴다. */
   S.fzGainT=Math.min(60,0.92/peak);
   const G=S.fzGain||S.fzGainT;
-  /* 실시간과 같은 색을 쓴다. 예전에는 20~58% 를 핑크로 칠했는데 그 범위는 근거 없는
-     하드코딩이라 실제 클릭 위치와 어긋났고, 정지 순간 화면이 확 바뀌어 보이는 주된
-     원인이었다. 검출 시점은 아래 세로선 하나로만 알린다. */
-  const pw=new Path2D();
+  /* 모델이 들은 구간(S.fzSpan)만 붉게. 스펙트로그램의 점선 박스와 같은 값이라 두
+     패널의 붉은 영역이 정확히 같은 시각을 가리킨다. */
+  const sp=(!S.manual&&S.fzSpan)?S.fzSpan:null;
+  const a0=sp?Math.floor(sp[0]*w):-1, a1=sp?Math.ceil(sp[1]*w):-1;
+  const pHot=new Path2D(), pDim=new Path2D();
   for(let i=0;i<w;i++){
     let mn=0,mx=0;
     for(let j=i*step;j<Math.min((i+1)*step,d.length);j++){
       if(d[j]<mn)mn=d[j]; if(d[j]>mx)mx=d[j];}
     const lo=cy+Math.max(-amp,mn*G*amp), hi=cy+Math.min(amp,mx*G*amp);
-    pw.moveTo(i+.5,lo);pw.lineTo(i+.5,Math.max(hi,lo+1));
+    const pp=(sp&&i>=a0&&i<=a1)?pHot:pDim;
+    pp.moveTo(i+.5,lo);pp.lineTo(i+.5,Math.max(hi,lo+1));
   }
-  g.strokeStyle="#a9a6a8";g.lineWidth=1;g.stroke(pw);
+  g.lineWidth=1;
+  g.strokeStyle="#a9a6a8";g.stroke(pDim);
+  g.strokeStyle="#ff3d59";g.stroke(pHot);
+  if(sp){                                  /* 구간 배경을 아주 옅게 깔아 눈에 띄게 */
+    g.fillStyle="rgba(255,61,89,.07)";g.fillRect(a0,0,a1-a0,h);
+  }
   if(!S.manual){
     g.strokeStyle="rgba(211,33,63,.55)";g.setLineDash([3,4]);
-    g.beginPath();g.moveTo(w*0.25,0);g.lineTo(w*0.25,h);g.stroke();g.setLineDash([]);
+    const XT=w*S.snap.pre_frac;
+    g.beginPath();g.moveTo(XT,0);g.lineTo(XT,h);g.stroke();g.setLineDash([]);
   }
   /* SNR 화살표 (목업 v05): 클릭 피크 ↕ 배경 띠 — "배경보다 N dB 더 큼" */
   if(!S.manual&&S.fzSnr!=null&&S.fzBuf){
@@ -641,7 +668,8 @@ function drawFreezeWave(){
     g.font="600 10.5px -apple-system,sans-serif";g.fillText("더 큼",ax2+10,mid+21);
   }
   g.fillStyle=S.manual?"#706e70":"#d3213f";g.font="600 9.5px -apple-system,sans-serif";
-  g.fillText(S.manual?"정지된 1.0초":"잡힌 1.0초  (−0.25s … +0.75s)",6,12);
+  g.fillText(S.manual?`정지된 ${(S.snap.pre_s+S.snap.post_s).toFixed(1)}초`
+    :`잡힌 순간 (−${S.snap.pre_s.toFixed(2)}s … +${S.snap.post_s.toFixed(2)}s)`,6,12);
 }
 
 /* ── 스펙트로그램 ─────────────────────────────────────────── */
@@ -730,9 +758,10 @@ function drawFreezeSpec(){
   }
   if(!S.manual){
     g.strokeStyle="rgba(255,255,255,.85)";g.lineWidth=1.6;g.setLineDash([4,4]);
-    g.beginPath();g.moveTo(w*0.25,0);g.lineTo(w*0.25,h);g.stroke();g.setLineDash([]);
+    const XT=w*S.snap.pre_frac;
+    g.beginPath();g.moveTo(XT,0);g.lineTo(XT,h);g.stroke();g.setLineDash([]);
     g.fillStyle="#fff";g.font="600 9.5px -apple-system,sans-serif";
-    g.fillText("검출 시점 (판정 창 중심 — 소리 피크와 다를 수 있음)",w*0.25+6,13);
+    g.fillText("검출 시점 (소리가 시작된 지점)",XT+6,13);
   }
 }
 
