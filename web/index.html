@@ -93,6 +93,8 @@
   .plot{flex:1;min-height:0;position:relative;overflow:hidden}
   .plot canvas{position:absolute;top:0;bottom:0;left:0;right:0;width:100%;height:100%;
                display:block;border-radius:6px}
+  /* 시간축을 쓰는 두 패널(파형·스펙트로그램)은 같은 값이어야 한다 — 어긋나면 같은
+     시각이 서로 다른 x 에 그려진다. */
   .plot.inset canvas{left:38px;width:calc(100% - 38px)}
   .yax{position:absolute;left:0;top:0;bottom:0;width:32px;display:flex;flex-direction:column;
        justify-content:space-between;font-size:10px;color:var(--tx3);pointer-events:none;
@@ -175,7 +177,9 @@
     <section class="card">
       <div class="ch"><h2>실시간 파형</h2><span class="sub">소리의 크기</span>
         <span class="right" id="wstat">–</span></div>
-      <div class="plot"><canvas id="wave"></canvas></div>
+      <!-- inset: 스펙트로그램과 **같은 플롯 영역**을 쓴다. 여기만 left:0 이면 두 패널의
+           시간축이 38px 어긋나서 "지금" 선이 서로 안 맞는다(y축 라벨 자리 차이). -->
+      <div class="plot inset"><canvas id="wave"></canvas></div>
       <div class="cap">회색 띠가 이 방의 평소 소음. 청록으로 크게 솟는 것이 클릭 후보다.
         클릭이 잡히면 하나 세고 화면이 자동으로 멈춘다 — 재생을 누르면 이어서 듣는다.</div>
     </section>
