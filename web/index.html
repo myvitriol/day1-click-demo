@@ -253,7 +253,7 @@ function virRGB(v,o,a){const x=Math.max(0,Math.min(.9999,v))*31,i=x|0,f=x-i,
 /* lag = 배열 끝에서 화면 오른쪽 끝까지의 거리(프레임, 소수). 렌더 루프가 줄이고
    데이터 도착이 늘린다. xf = 전환 crossfade 상태, fzGain = 정지 파형 배율. */
 const S={env:[],spec:[],ambient:[],stars:[],atlas:null,level:0,frozen:false,manual:false,
-  lag:30,vel:100,xf:null,fzGain:1,fzUrl:null,
+  lag:30,vel:100,xf:null,fzGain:1,build:null,fzUrl:null,
          detect:true,rev:0,countRev:0,lastToggle:0,fzBuf:null,fzSpec:null,gain:12,
          floorLin:0.01,conn:false,sep:0};
 /* 서버 rev 보다 낡은 상태 메시지는 버린다 — in-flight 역전 차단 */
@@ -300,6 +300,12 @@ connect();
 
 const H={
   hello(m){
+    /* 서버 코드가 바뀐 뒤 재연결됐다면 이 탭은 옛 화면이다 — 스스로 새로고침한다.
+       (git pull 후 백엔드만 새 코드가 되고 화면은 그대로인 상황을 막는다) */
+    if(m.build){
+      if(S.build && m.build!==S.build){ location.reload(); return; }
+      S.build=m.build;
+    }
     S.noSrc = m.device.kind==="none";
     renderDevice(m.device, m.inputs);
     $("dot").classList.toggle("off", S.noSrc);

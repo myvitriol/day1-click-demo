@@ -6,6 +6,7 @@ pause/resume 은 WS 핸들러가 ctrl 의 bool 을 직접 뒤집는다(즉답). 
 """
 import argparse
 import json
+import os
 import queue
 
 from . import config as C
@@ -114,6 +115,31 @@ def selftest(args):
 
 
 # ── serve ───────────────────────────────────────────────────────
+def _build_id():
+    """코드 버전 식별자. 브라우저가 재연결할 때 이걸 비교해 **스스로 새로고침**한다.
+
+    git pull 로 백엔드는 새 코드가 되지만, 이미 열려 있는 탭은 index.html 을 다시
+    요청하지 않아 옛 화면이 그대로 남는다. WS 는 자동 재연결되므로 화면과 백엔드가
+    어긋난 채로 계속 도는 상황이 생긴다. 커밋 해시만 쓰면 개발 중(uncommitted)에는
+    안 바뀌므로 index.html 의 mtime/size 도 섞는다.
+    """
+    import subprocess
+    h = ""
+    try:
+        h = subprocess.run(["git", "-C", str(C.REPO), "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=2).stdout.strip()
+    except Exception:
+        pass
+    try:
+        st = (C.REPO / "web/index.html").stat()
+        return f"{h or 'nogit'}-{int(st.st_mtime)}-{st.st_size}"
+    except Exception:
+        return h or "unknown"
+
+
+BUILD_ID = _build_id()
+
+
 def serve(args):
     import asyncio  # noqa: F401  (dev_lock/to_thread 에서 사용)
     import uvicorn
@@ -215,7 +241,7 @@ def serve(args):
 
     def hello_payload():
         cur = nonlocal_src["src"]
-        return {"type": "hello", "sr": C.SR, "device": cur.info(),
+        return {"type": "hello", "sr": C.SR, "build": BUILD_ID, "device": cur.info(),
                 "inputs": (list_inputs() if args.source == "mic" else []),
                 "source_kind": cur.info().get("kind"),
                 "postp": args.postp,
@@ -317,7 +343,22 @@ def serve(args):
             webbrowser.open(f"http://{C.HOST}:{args.port}/")
 
     print(f"[serve] http://{C.HOST}:{args.port}/  (source={args.source})")
-    uvicorn.run(app, host=C.HOST, port=args.port, log_level="warning")
+    # 돌고 있는 데모를 뒤에서 정확히 찾을 수 있게 PID 를 남긴다. pgrep -f 패턴으로
+    # 찾는 방식은 위험하다 — 그 문자열을 명령줄에 가진 **자기 셸까지 잡는다**(실제로
+    # 그렇게 셸이 죽는 것을 봤다). 파일에는 PID 와 포트를 적어둔다.
+    lock = C.REPO / ".run.lock"
+    try:
+        lock.write_text(f"{os.getpid()}\n{args.port}\n")
+    except OSError:
+        pass
+    try:
+        uvicorn.run(app, host=C.HOST, port=args.port, log_level="warning")
+    finally:
+        try:
+            if lock.exists() and lock.read_text().split("\n")[0].strip() == str(os.getpid()):
+                lock.unlink()
+        except OSError:
+            pass
 
 
 def main(argv=None):

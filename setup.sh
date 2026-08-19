@@ -28,6 +28,33 @@ die(){ echo "      ${R}FAIL${N} $1"; exit 1; }
 
 echo "${B}day1-click-demo setup${N}   (DAL: $DAL_DIR @ ${DAL_REF:0:7})"
 
+# 돌고 있던 데모를 먼저 정지한다. 안 그러면 새 코드로 setup 해놓고도 옛 서버가 포트를
+# 쥐고 있어 새 서버가 뜨지 못하고(bind: address already in use), 브라우저는 옛 백엔드에
+# 계속 붙어 있게 된다.
+#
+# run.py 가 남긴 .run.lock 의 PID 만 정확히 겨냥한다. `pgrep -f` 패턴으로 찾으면 그
+# 문자열을 명령줄에 가진 **자기 셸까지 잡아** 스크립트가 스스로 죽는다(실측).
+LOCK="$HERE/.run.lock"
+if [ -f "$LOCK" ]; then
+  OLD_PID="$(head -1 "$LOCK" 2>/dev/null | tr -dc '0-9')"
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    # 정말 우리 데모인지 명령줄로 한 번 더 확인한 뒤에만 종료한다
+    if ps -p "$OLD_PID" -o command= 2>/dev/null | grep -q "run\.py"; then
+      echo "      stopping the running demo (pid $OLD_PID)"
+      kill "$OLD_PID" 2>/dev/null || true
+      for _ in 1 2 3 4 5; do
+        kill -0 "$OLD_PID" 2>/dev/null || break
+        sleep 1
+      done
+      kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null || true
+      ok "previous demo stopped - the browser tab reloads itself on reconnect"
+    else
+      warn ".run.lock points at pid $OLD_PID which is not our demo - leaving it alone"
+    fi
+  fi
+  rm -f "$LOCK"
+fi
+
 step 1 "System tools"
 command -v git >/dev/null || die "git not found"
 git lfs version >/dev/null 2>&1 || die "git-lfs not found (macOS: brew install git-lfs / Ubuntu: apt install git-lfs)"
