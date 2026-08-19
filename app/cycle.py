@@ -388,6 +388,7 @@ class CycleController(threading.Thread):
         # 두 구간의 시작이 다르므로 sample 차이를 그대로 열 수로 환산해 옮긴다 — 예전에는
         # 0.25*cols 로 못박아 뒀는데, 이벤트 시각을 onset 으로 바꾼 뒤로는 그 값이 맞지 않는다.
         cam = None
+        span = None                            # CAM 이 기여했다고 본 시간 범위(seg 상대)
         cls = info.get("cls")                  # 표시 이름(display_names)에서 역파싱하지 않는다
         if cls is not None:
             u8 = self.eng.cam(ew, cls, spec["cols"])
@@ -401,6 +402,20 @@ class CycleController(threading.Thread):
                 else:
                     if -off < cols:
                         grid[:, :cols + off] = u8[:, -off:]
+                # 기여 구간(열 범위)을 함께 보낸다. 파형의 붉은 표시·SNR 화살표가
+                # 이걸 쓰므로 세 표시가 같은 구간을 가리킨다.
+                cmax = grid.max(axis=0)
+                thr = max(int(cmax.max()), 1) * 0.55
+                idx = np.flatnonzero(cmax >= thr)
+                if len(idx):
+                    span = [round(float(idx[0]) / cols, 4),
+                            round(float(idx[-1] + 1) / cols, 4)]
+                    # SNR 은 seg 전체 peak 가 아니라 **그 구간의** peak 로 잰다. 전체로
+                    # 재면 클릭이 아닌 다른 큰 소리를 가리켜 화살표가 엉뚱한 곳에 섰다.
+                    a0 = max(0, int(span[0] * len(seg)))
+                    a1 = min(len(seg), max(a0 + 1, int(span[1] * len(seg))))
+                    pk = float(20 * np.log10(np.abs(seg[a0:a1]).max() + 1e-9) + 100)
+                    snr = round(max(0.0, pk - self._floor_db()), 1)
                 cam = {"b64": base64.b64encode(grid.tobytes()).decode(),
                        "rows": int(grid.shape[0]), "cols": int(grid.shape[1])}
         if info["epoch"] != self.epoch:        # 무거운 일 동안 resume/dial 개입 — 폐기(Codex R5)
@@ -410,7 +425,7 @@ class CycleController(threading.Thread):
             self.rev += 1
         msg = {"type": "freeze", "manual": False, "rev": self.rev,
                "ev": info["ev"], "pair": info["pair"],
-               "wav_b64": wav_b64(seg), "spec": spec, "cam": cam,
+               "wav_b64": wav_b64(seg), "spec": spec, "cam": cam, "span": span,
                "map": mp, "snr_db": snr,
                "click_total": self.click_total, "count_rev": self.count_rev}
         self.last_freeze = msg

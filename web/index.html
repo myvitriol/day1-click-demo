@@ -254,7 +254,8 @@ function virRGB(v,o,a){const x=Math.max(0,Math.min(.9999,v))*31,i=x|0,f=x-i,
    데이터 도착이 늘린다. xf = 전환 crossfade 상태, fzGain = 정지 파형 배율. */
 const S={env:[],spec:[],ambient:[],stars:[],atlas:null,level:0,frozen:false,manual:false,
   lag:30,vel:100,xf:null,fzGain:1,build:null,fzSpan:null,
-  snap:{pre_s:0.5,post_s:0.5,pre_frac:0.5},   /* hello 가 덮어쓴다 */fzUrl:null,
+  snap:{pre_s:0.5,post_s:0.5,pre_frac:0.5},   /* hello 가 덮어쓴다 */
+  xfT:null,fzUrl:null,
          detect:true,rev:0,countRev:0,lastToggle:0,fzBuf:null,fzSpec:null,gain:12,
          floorLin:0.01,conn:false,sep:0};
 /* 서버 rev 보다 낡은 상태 메시지는 버린다 — in-flight 역전 차단 */
@@ -364,7 +365,13 @@ const H={
     if(!S.frozen)setFrozen(true,true);
   },
   freeze(m,quiet){                       /* quiet=재수화(hello) — 애니메이션·카운터 갱신 없음 */
-    if(!acceptRev(m))return;
+    if(!acceptRev(m)){
+      /* 낡은 메시지는 화면에 반영하지 않는다. 다만 전환 **대기 상태는 풀어준다** —
+         안 풀면 렌더 루프가 아무것도 그리지 않는 채로 남아 화면이 영구히 굳는다
+         (정지를 눌렀는데 아무 일도 안 일어나는 것으로 보였다). */
+      if(S.xf&&S.xf.t0==null) S.xf.t0=performance.now();
+      return;
+    }
     setFrozen(true, !!m.manual);
     const cntOk=acceptCount(m);
     if(!quiet&&cntOk&&m.click_total!==undefined){$("cnt").textContent=m.click_total;
@@ -391,7 +398,9 @@ const H={
     }
     S.fzSpec=decodeSpec(m.spec);
     S.fzCam=(m.cam&&!m.manual)?decodeSpec(m.cam):null;
-    S.fzSpan=camSpan(S.fzCam);        /* 파형·스펙트로그램이 같은 시간 범위를 쓴다 */
+    /* 파형·스펙트로그램·SNR 화살표가 같은 구간을 가리킨다. 서버가 준 값을 쓰고
+       (SNR 도 그 구간으로 재계산됨) 없으면 CAM 에서 직접 구한다. */
+    S.fzSpan=(m.span&&!m.manual)?m.span:camSpan(S.fzCam);
     S.fzBuf=null;S.fzSnr=m.snr_db;
     /* 스펙트로그램과 파형(WAV 비동기 decode)이 **둘 다** 준비된 뒤에 한 번만 전환한다.
        예전에는 spec 이 즉시 바뀌고 파형은 "준비 중…" → 완성본으로 다시 튀어 두 번
@@ -514,7 +523,11 @@ function setFrozen(f,manual){
      "어두워졌다 켜짐"이었고 변하지도 않는 소리의 지도까지 함께 깜빡였다. */
   if(S.frozen!==f){
     S.xf={wave:snapCanvas(W), spec:snapCanvas(P), t0:null, dur:170, wait:f};
-    if(f){ S.fzGain=S.gain; }            // 정지 파형은 실시간 배율을 이어받는다
+    if(f){
+      S.fzGain=S.gain;                   // 정지 파형은 실시간 배율을 이어받는다
+      clearTimeout(S.xfT);               // 정지 데이터가 끝내 안 오더라도 갇히지 않게
+      S.xfT=setTimeout(()=>{ if(S.xf&&S.xf.t0==null) S.xf.t0=performance.now(); }, 900);
+    }
     else { S.xf.t0=performance.now(); }  // 재개는 live 데이터가 이미 있으니 즉시
   }
   S.frozen=f;S.manual=!!manual;badge();paintPlay();}
@@ -575,8 +588,9 @@ function drawWave(){
   const sub=S.lag-Math.floor(S.lag);
   const end=S.env.length-Math.floor(S.lag);
   if(end<=0) return;
-  const n=Math.min(end,Math.floor(w));
-  const off=end-n, x0=Math.floor(w)-n-sub;
+  const RW=Math.floor(w*NOW_FRAC);            /* 지금 선까지가 지나간 시간 */
+  const n=Math.min(end,RW);
+  const off=end-n, x0=RW-n-sub;
   let peak=1e-4;
   for(let i=0;i<n;i++){const e=S.env[off+i];
     const a=Math.max(Math.abs(e[0]),Math.abs(e[1])); if(a>peak)peak=a;}
@@ -644,8 +658,12 @@ function drawFreezeWave(){
   }
   /* SNR 화살표 (목업 v05): 클릭 피크 ↕ 배경 띠 — "배경보다 N dB 더 큼" */
   if(!S.manual&&S.fzSnr!=null&&S.fzBuf){
-    let pi=0,pv=0;                       /* 전체 1초에서 피크 — 서버 SNR 산출 구간과 동일 */
-    for(let i=0;i<w;i++){
+    /* 피크는 **클릭 구간(S.fzSpan) 안에서만** 찾는다. 전체 1초에서 찾으면 클릭이 아닌
+       다른 큰 소리를 가리켜 화살표가 붉은 구간 밖에 섰다(서버 SNR 도 같은 구간 기준). */
+    const spA=S.fzSpan?Math.floor(S.fzSpan[0]*w):0;
+    const spB=S.fzSpan?Math.ceil(S.fzSpan[1]*w):w;
+    let pi=Math.floor((spA+spB)/2),pv=0;
+    for(let i=spA;i<Math.min(spB,w);i++){
       let mx=0;
       for(let j=i*step;j<Math.min((i+1)*step,d.length);j++){const a2=Math.abs(d[j]);if(a2>mx)mx=a2;}
       if(mx>pv){pv=mx;pi=i;}
@@ -708,15 +726,17 @@ function blit(g,cols,w,h,x0=0){
    시각은 오른쪽 끝이다. 파형·스펙트로그램이 같은 시간 격자(10ms/px)를 쓰기 때문에
    같은 x 가 같은 시각 — 두 패널의 선이 정확히 맞물린다.
    (엄밀히는 표시 지연 LAG0 프레임만큼 과거지만 0.3s 라 사람은 구분하지 못한다) */
+const NOW_FRAC=0.5;              /* "지금"이 화면에서 차지하는 위치. 정지 화면의 검출
+   시점도 가운데이므로, 클릭이 이 선을 지나는 순간 그 자리에서 화면이 멈춘 것처럼 보인다.
+   오른쪽 절반은 아직 오지 않은 시간이라 비워 둔다. */
 function nowLine(g,w,h,label){
-  const x=w-1.5;
-  g.strokeStyle="rgba(0,179,156,.85)";g.lineWidth=1.5;
+  const x=w*NOW_FRAC;
+  g.strokeStyle="rgba(0,179,156,.9)";g.lineWidth=1.5;
   g.beginPath();g.moveTo(x,0);g.lineTo(x,h);g.stroke();
   if(label){
-    g.font="700 9px -apple-system,sans-serif";
-    const tw=g.measureText(label).width;
-    g.fillStyle="rgba(0,179,156,.9)";
-    g.fillText(label,Math.max(2,x-tw-4),10);
+    g.font="700 9.5px -apple-system,sans-serif";
+    g.fillStyle="rgba(0,179,156,.95)";
+    g.fillText(label,x+5,11);
   }
 }
 function drawSpec(){
@@ -725,14 +745,14 @@ function drawSpec(){
      늘려 그리면, 컬럼이 쌓일수록 같은 폭에 더 많이 들어가 무늬가 좁아지며 왼쪽으로
      밀린다 — 흐르는 게 아니라 "왼쪽에 누적되며 줄어드는" 것으로 보인다(초반 수 초).
      그래서 채워진 만큼의 폭만 계산해 오른쪽에 붙인다: 시작부터 오른쪽→왼쪽 흐름. */
-  const view=Math.floor(w);                       // 화면에 담는 컬럼 수 = 시간 폭
+  const RW=Math.floor(w*NOW_FRAC);                // 지금 선까지가 지나간 시간
   const sub=S.lag-Math.floor(S.lag);              // 파형과 같은 서브픽셀 오프셋
   const end=S.spec.length-Math.floor(S.lag);
-  g.fillStyle="#440154";g.fillRect(0,0,w,h);      // 아직 안 찬 왼쪽은 배경
+  g.fillStyle="#440154";g.fillRect(0,0,w,h);      // 아직 안 찬 곳은 배경
   if(end<=0) return;
-  const n=Math.min(end,view);
-  const px=w*n/view;                              // 컬럼당 px 를 항상 w/view 로 고정
-  blit(g,S.spec.slice(end-n,end),px,h,w-px-sub);
+  const n=Math.min(end,RW);
+  const px=RW*n/RW;                               // 1컬럼=1px 고정(파형과 같은 격자)
+  blit(g,S.spec.slice(end-n,end),n,h,RW-n-sub);
   nowLine(g,w,h,null);                            /* 파형 쪽에만 글자를 둔다 */
 }
 function drawFreezeSpec(){
@@ -747,23 +767,19 @@ function drawFreezeSpec(){
     let hi=1;
     for(let c=0;c<cols;c++)for(let r=0;r<rows;r++)if(S.fzCam[c][r]>hi)hi=S.fzCam[c][r];
     const TH=hi*0.55;
-    /* 어둡게 덮는 마스크를 offscreen RGBA 한 장으로 만들어 한 번에 얹는다.
-       칸마다 fillRect 하면 96x392 = 3.7만 회가 되어 맥에서 눈에 보이게 버벅인다. */
-    if(OFF2.width!==cols||OFF2.height!==rows){OFF2.width=cols;OFF2.height=rows;}
-    const mi=OFF2G.createImageData(cols,rows), md=mi.data;
+    /* 예전에는 기여가 낮은 곳을 어둡게 덮었는데(spotlight), CAM 이 한쪽에 몰리면
+       화면 절반이 통째로 어두워져 스펙트로그램을 읽을 수 없었다. 이제 덮지 않고
+       **검출 시점을 중심으로 한 대칭 박스**만 그린다. */
     let x0=1e9,x1=-1,y0=1e9,y1=-1;
     for(let c=0;c<cols;c++){const col=S.fzCam[c];
-      for(let r=0;r<rows;r++){
-        const a=Math.max(0,(1-col[r]/hi))*0.80;   // 기여 0 → 80% 어둡게, 최대 → 그대로
-        const o=((rows-1-r)*cols+c)*4;
-        md[o]=6;md[o+1]=3;md[o+2]=14;md[o+3]=(a*255)|0;
+      for(let r=0;r<rows;r++)
         if(col[r]>=TH){if(c<x0)x0=c; if(c>x1)x1=c; if(r<y0)y0=r; if(r>y1)y1=r;}
-      }}
-    OFF2G.putImageData(mi,0,0);
-    g.imageSmoothingEnabled=true;
-    g.drawImage(OFF2,0,0,cols,rows,0,0,w,h);
-    if(x1>=0){                                   /* 핵심 영역 테두리 */
-      const bx=x0*cw2, bw=(x1-x0+1)*cw2, by=h-(y1+1)*ch2, bh=(y1-y0+1)*ch2;
+    }
+    if(x1>=0){                                   /* 핵심 영역 테두리 — 시간축은 대칭 */
+      const cx=w*S.snap.pre_frac;                /* 검출 시점 = 가운데 */
+      const hw=Math.max(Math.abs(x0*cw2-cx), Math.abs((x1+1)*cw2-cx), 10);
+      const bx=Math.max(0,cx-hw), bw=Math.min(w,cx+hw)-bx;
+      const by=h-(y1+1)*ch2, bh=(y1-y0+1)*ch2;
       g.strokeStyle="#ff3d59";g.lineWidth=2;g.setLineDash([5,4]);
       g.strokeRect(bx,by,bw,bh);g.setLineDash([]);
       g.fillStyle="#ff3d59";g.font="700 10px -apple-system,sans-serif";
