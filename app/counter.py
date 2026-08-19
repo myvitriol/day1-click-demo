@@ -24,8 +24,9 @@ DAL postprocessing/hysteresis.py 의 논리(tau_on/tau_off/min_on)를 그대로 
   단 window 자체가 1초라 1초 이내 연타는 원리적으로 분리 못 한다.
 """
 from . import config as C
+from .modelspec import SPEC
 
-OTHERS = 0
+OTHERS = SPEC.others_index             # 모델 교체 계약은 app/modelspec.py 한 곳
 
 
 class ClickCounter:
@@ -36,9 +37,24 @@ class ClickCounter:
         self.reset()
 
     def reset(self):
-        """스트림 경계(장치 전환·복구)에서만 부른다. 카운트 총계는 건드리지 않는다."""
+        """스트림 경계(장치 전환·복구)에서만. 옛 신호는 무관하니 완전히 재무장한다.
+        카운트 총계는 건드리지 않는다."""
         self.on_click = False                  # 지금 '클릭 중' 상태인가 (클래스 무관)
         self._on = 0
+
+    def resync(self):
+        """재개(정지→재생) 경계 — latch(on_click)는 **보존**한다.
+
+        방금 센 클릭의 tail 이 아직 1s window 안에 tau_on 위로 남아 있다. 여기서
+        재무장하면 같은 소리가 상승 edge 로 다시 잡힌다 — 실측으로 물리 클릭 1개가
+        2건이 됐다(0.6s 간격 = min_on 2 hop + 정지·재개 왕복). release 는 원래
+        설계대로 신호가 tau_off 아래로 내려갈 때만 일어난다.
+
+        대가: 정지 중에 시작해 재개 후에도 계속 tau_on 위인 클릭 1건은 놓친다.
+        클릭은 수백 ms 소리라 그 창이 좁고, 반대쪽 실패(모든 클릭이 2배로 세짐)가
+        데모에서 훨씬 치명적이다.
+        """
+        self._on = 0                           # window 연속성이 끊겼다 — 연속 high 만 초기화
 
     def set_level(self, level: int):
         """판정 기준 3단 → tau_on 만 이동 (엄격할수록 높은 문턱)."""

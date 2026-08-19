@@ -160,32 +160,53 @@ def serve(args):
                 print(f"[ws] broadcaster error: {e}")
 
     async def streamer():
-        """10Hz 화면 스트림. 정지 중에도 status 는 10Hz — 상태가 늦게 도는 일이 없게."""
+        """10Hz 화면 스트림. 파형과 스펙트로그램을 **같은 시간 격자**로 만든다.
+
+        예전에는 tick 마다 "그 사이 들어온 만큼"을 20 포인트로 눌러 담고(포인트당 5ms,
+        지터에 따라 가변), 스펙트로그램은 격 tick 에서 그 tick 구간만 STFT 했다(컬럼당
+        25ms, 구간 누락). 웹은 둘 다 1단위=1px 로 그리므로 같은 폭에서 파형이 5배 빠르게
+        흘렀다(실측 196.9 pt/s vs 39.4 col/s). 이제 둘 다 절대 sample 격자(DISP_HOP=10ms)
+        에서 같은 프레임을 떠 1:1 로 정렬한다 — 각 100/s, 1px = 10ms.
+
+        정지 중에도 status 는 10Hz — 상태가 늦게 도는 일이 없게.
+        """
         seq = 0
-        last = 0
+        tick = 0
+        nxt = None                             # 다음 프레임의 시작 sample (절대 인덱스)
+        G, NF = C.DISP_HOP, C.DISP_NFFT
+        MAXF = C.SR // G                       # 한 tick 에 만들 프레임 상한 = 1초분
         from .cycle import pack_spec, spec_rows
         while True:
             try:
                 await asyncio.sleep(1 / C.STREAM_HZ)
-                w = ring.write_idx
-                n = w - last
-                last = w                       # 정지 중에도 전진 — 재개는 live edge 부터
+                tick += 1
                 seq += 1
+                w = ring.write_idx
                 if ctrl.paused:
+                    nxt = None                 # 재개는 live edge 부터
                     await ui_q.put({"type": "stream", "seq": seq, "env": None,
                                     "spec": None, "status": ctrl.status()})
                     continue
-                if n <= 0:
+                if nxt is None:
+                    nxt = max(0, w - NF)
+                nf = (w - nxt - NF) // G + 1   # NFFT 를 채울 수 있는 프레임 수
+                if nf <= 0:                    # 입력 없음(미선택·죽음) — 상태만 보낸다
+                    if tick % C.STREAM_HZ == 0:
+                        await ui_q.put({"type": "stream", "seq": seq, "env": None,
+                                        "spec": None, "status": ctrl.status()})
                     continue
-                n = min(n, C.SR)
-                seg = ring.read_at(w - n, n)
-                if seg is None:
+                if nf > MAXF:                  # 밀렸다 — 따라잡고 그만큼 화면은 건너뛴다
+                    nxt += (nf - MAXF) * G
+                    nf = MAXF
+                seg = ring.read_at(nxt, (nf - 1) * G + NF)
+                if seg is None:                # ring 이 이미 지나갔다 — live edge 로 재동기
+                    nxt = None
                     continue
-                k = max(1, n // 20)
-                env = [[round(float(seg[i:i + k].min()), 4), round(float(seg[i:i + k].max()), 4)]
-                       for i in range(0, len(seg) - k + 1, k)][:20]
-                spec = None
-                if n >= C.DISP_NFFT and ctrl.spec_floor is not None:
+                nxt += nf * G
+                env = [[round(float(seg[i * G:(i + 1) * G].min()), 4),
+                        round(float(seg[i * G:(i + 1) * G].max()), 4)] for i in range(nf)]
+                spec = None                    # 프레임 i 의 시작 sample 이 env 와 동일하다
+                if ctrl.spec_floor is not None:
                     spec = pack_spec(spec_rows(seg) - ctrl.spec_floor[:, None])
                 await ui_q.put({"type": "stream", "seq": seq, "env": env, "spec": spec,
                                 "status": ctrl.status()})
@@ -244,6 +265,7 @@ def serve(args):
                         new = MicSource(ring, on_error=ctrl.fail, device=want)  # 미시작
                         old_idx = old.info().get("index", -1)
                         old.stop()
+                        ctrl.req_source_switch()   # ★ 새 stream 이 ring 에 쓰기 시작하기 전에 경계를 박는다
                         try:
                             new.start()
                             return new
@@ -254,10 +276,16 @@ def serve(args):
                                 pass
                             if old_idx is not None and old_idx >= 0:
                                 back = MicSource(ring, on_error=ctrl.fail, device=old_idx)
+                                ctrl.req_source_switch()      # 복귀도 경계가 필요하다
                                 back.start()
                                 ctrl.src = back
                                 nonlocal_src["src"] = back
-                            raise RuntimeError("new device failed; previous input restored")
+                                raise RuntimeError("new device failed; previous input restored")
+                            from .audio import NoSource as _NS   # 복귀할 장치도 없다 → 미선택 상태
+                            ns = _NS("previous input could not be restored")
+                            ctrl.src = ns
+                            nonlocal_src["src"] = ns
+                            raise RuntimeError("new device failed; no input active")
 
                     async with dev_lock:
                         old = nonlocal_src["src"]
@@ -265,7 +293,6 @@ def serve(args):
                             new = await asyncio.to_thread(_swap, old, idx)
                             nonlocal_src["src"] = new
                             ctrl.src = new
-                            ctrl.req_source_switch()   # 섞인 구간 폐기 + 새 기준
                             await ui_q.put({"type": "device", "device": new.info(),
                                             "inputs": list_inputs()})
                         except Exception as e:

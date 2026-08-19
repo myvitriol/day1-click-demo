@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from . import config as C
+from .modelspec import SPEC
 
 TARGET_SUFFIX = "backbone.out_c.0"      # activation [960, 4, 13].
 # 실측(golden c1/c2, 2026-08-18): layers.11(8×26)은 시간축이 경계·엉뚱한 곳을 짚었고
@@ -43,21 +44,18 @@ class ClickCAM:
         from DAL.models.xai.gradcam import GradCAM
         self.infer = infer
         target = None
-        last_conv = None
         for n, mod in infer.named_modules():
-            if isinstance(mod, torch.nn.Conv2d):
-                last_conv = mod
-            if n.endswith(TARGET_SUFFIX):
+            if n.endswith(SPEC.cam_target_suffix):
                 target = mod
-        if target is None:                  # 백업: 마지막 Conv2d
-            target = last_conv
-        if target is None:
-            raise RuntimeError("no conv layer found for GradCAM")
+        if target is None:                  # 조용한 fallback 금지 — 틀린 설명을 내는 게 더 나쁘다
+            raise RuntimeError(
+                f"GradCAM target '{SPEC.cam_target_suffix}' not found. "
+                "Update ModelSpec.cam_target_suffix for this model.")
         self.gc = GradCAM(_SpecHead(infer), target)
 
         # mel 행(모델 축) → 표시 스펙트로그램 행(geomspace) 매핑.
         # 단순 row-resize 금지(Codex R4) — mel 중심주파수 기준으로 재배치한다.
-        n_mels = 128
+        n_mels = SPEC.cam_n_mels
         centers = _mel_centers_hz(n_mels, C.SR / 2)
         edges = np.geomspace(40, C.SR / 2, C.DISP_BINS + 1)
         rows = np.searchsorted(edges, centers) - 1

@@ -25,7 +25,7 @@ import numpy as np
 from . import config as C
 
 
-_CLS = {1: "click_1", 2: "click_2"}       # 표시용. 카운트는 클래스와 무관하게 1건
+from .modelspec import SPEC               # 표시용 라벨. 카운트는 클래스와 무관하게 1건
 
 
 def wav_b64(seg: np.ndarray) -> str:
@@ -37,9 +37,13 @@ def wav_b64(seg: np.ndarray) -> str:
     return base64.b64encode(bio.getvalue()).decode()
 
 
-def spec_rows(seg: np.ndarray) -> np.ndarray:
-    """표시 전용 log-magnitude STFT → [DISP_BINS, cols] dB (저→고)."""
-    n, h = C.DISP_NFFT, C.DISP_HOP
+def spec_rows(seg: np.ndarray, hop: int = None) -> np.ndarray:
+    """표시 전용 log-magnitude STFT → [DISP_BINS, cols] dB (저→고).
+
+    hop 만 바꿔 쓸 수 있다(정지 화면은 더 촘촘하게). NFFT 는 고정 — spec_floor 를
+    실시간과 공유하므로 window 길이가 바뀌면 밝기 기준이 어긋난다.
+    """
+    n, h = C.DISP_NFFT, (C.DISP_HOP if hop is None else int(hop))
     cols = max(1, (len(seg) - n) // h + 1)
     win = np.hanning(n).astype(np.float32)
     fr = np.stack([np.abs(np.fft.rfft(seg[i * h:i * h + n] * win)) for i in range(cols)])
@@ -64,14 +68,14 @@ def pack_spec(rows: np.ndarray) -> dict:
             "rows": int(rows.shape[0]), "cols": int(rows.shape[1])}
 
 
-def disp_spec(seg: np.ndarray, floor: np.ndarray = None) -> dict:
+def disp_spec(seg: np.ndarray, floor: np.ndarray = None, hop: int = None) -> dict:
     """표시용 스펙트로그램.
 
     설비 hum 같은 **정상 성분을 주파수 줄마다 빼서** 보여준다(표시 전용 — 모델 입력과 무관).
     안 빼면 저역 harmonic 이 항상 최대치로 깔려 클릭의 세로줄을 덮는다.
     floor 가 주어지면 그것으로, 없으면 이 구간의 행별 median 으로 뺀다(열이 충분할 때만).
     """
-    rows = spec_rows(seg)
+    rows = spec_rows(seg, hop)
     if floor is not None:
         rows = rows - floor[:, None]
     else:                                  # 기준 없음 → 이 구간의 하위 30% 를 기준으로(무음 경계 방어)
@@ -92,9 +96,13 @@ class CycleController(threading.Thread):
         self.paused = False                    # 진실. WS 핸들러가 직접 뒤집는다.
         self.detect_on = True                  # 감지 모드. False = 흐름만 보고 추론 안 함
         self.rev = 0                           # 정지/재생 전환 revision
+        self.listen_gen = 0                    # '듣는 중' 세대 — pause/resume/장치전환마다 +1.
+        #   predict 는 수십 ms 걸린다. 그 사이 상태가 바뀌면 낡은 결과를 세면 안 된다(Codex P0).
+        self.switch_sample = 0                 # 이 sample 이전에 시작한 window 는 옛 입력 것
         self.epoch = 0                         # 듣기 세대 (resume/dial 마다 +1)
         self.auto_pause = True                 # selftest 에서 끔
-        self._need_reset = False
+        self._need_resync = False              # 재개 → latch 보존(완전 재무장은 _reset_listen
+        #   을 장치전환·복구 경로에서 cycle 스레드가 직접 부른다)
         self._reqs = queue.Queue()             # 무거운 요청만: pause_snap / dial
         self._froze = False
         self._first_start = None
@@ -124,17 +132,24 @@ class CycleController(threading.Thread):
             return False
         self.paused = True
         self.rev += 1
+        self.listen_gen += 1                   # 진행 중 predict 결과 무효화
+        self._pending_snap = None              # 예약된 auto freeze 취소 — 아래 manual 이
+        #   화면을 잡는다(카운트는 이미 올라갔으니 손실 없다). 안 지우면 manual freeze
+        #   뒤에 같은 epoch 의 auto freeze 가 한 번 더 온다.
         self._reqs.put(("pause_snap", (self.rev, self.epoch)))
         return True
 
     def resume_now(self) -> bool:
         if not self.paused:
             return False
-        self.paused = False
         self.rev += 1
         self.epoch += 1                        # 미완 snapshot 은 epoch 로 자멸
+        self.listen_gen += 1
         self.last_freeze = None
-        self._need_reset = True                # 정지 동안의 상태는 안 이어감(총계는 유지)
+        self._pending_snap = None
+        self._need_resync = True               # 카운터 latch 는 보존, 연속 high 만 초기화
+        self.paused = False                    # ← 반드시 마지막. 먼저 풀면 cycle 스레드가
+        #   위 필드들이 갱신되기 전의 반쪽 상태로 window 를 처리한다.
         return True
 
     def detect_now(self, on: bool) -> bool:
@@ -144,6 +159,7 @@ class CycleController(threading.Thread):
             return False
         self.detect_on = on
         self.epoch += 1                        # in-flight predict/snapshot 이 있어도 epoch 로 자멸
+        self.listen_gen += 1
         if on:
             self.counter.reset()               # 쉰 동안의 상태는 안 이어감(총계는 유지)
         self._pending_snap = None
@@ -158,7 +174,13 @@ class CycleController(threading.Thread):
         self._reqs.put(("dial", level))
 
     def req_source_switch(self):
-        """입력 장치 전환 후 — 옛/새 소리가 섞인 구간을 버리고 새 귀·새 기준으로."""
+        """입력 장치 전환 후 — 옛/새 소리가 섞인 구간을 버리고 새 귀·새 기준으로.
+
+        경계를 sample 로 못 박는다: 이 지점 이전에 **시작한** window 는 옛 입력이 섞여 있어
+        추론에서 제외한다(Codex P0). 세대도 올려 진행 중 predict 결과를 무효화한다.
+        """
+        self.switch_sample = self.ring.write_idx + C.WIN_N   # 경계 이후 완전히 새 입력인 window 부터
+        self.listen_gen += 1
         self._reqs.put(("source_switch", None))
 
     def fail(self, msg):
@@ -178,7 +200,6 @@ class CycleController(threading.Thread):
                 continue
 
             self._last_win = time.time()
-            self._metrics(k, w)
 
             if self._err:
                 msg, self._err = self._err, None
@@ -189,24 +210,33 @@ class CycleController(threading.Thread):
                 self._recover(f"pipeline lag {lag_s:.1f}s")
                 continue
 
-            # 정지(paused)는 정지다 — 추론·카운트 전부 멈춘다. 재생을 눌러야 다시 듣는다.
+            # 정지(paused)는 정지다 — 추론·카운트·지표 전부 멈춘다(지표까지 멈춰야 floor·
+            # RMS·density 가 정지 구간에 오염되지 않는다 — Codex P1).
             if self.paused:
                 self._check_snapshot()         # 정지 직전 예약된 화면만 완성
                 continue
+            if start < self.switch_sample:     # 옛 입력이 섞인 window — 버린다
+                continue
+
+            self._metrics(k, w)
 
             if self.detect_on:                 # 감지 꺼짐 = 추론도 쉼 (CPU 절약)
-                if self._need_reset:           # 재개 직후 — 새 귀로
-                    self._reset_listen()
+                if self._need_resync:          # 재개 — latch 는 이어간다
+                    self._resync_listen()
+                gen = self.listen_gen          # predict 전 세대 캡처
                 out = self.eng.predict(w)
                 self._n_pred += 1
+                if gen != self.listen_gen or self.paused:
+                    continue                   # 추론 중 정지·전환됨 → 이 결과는 버린다
                 ev = self.counter.push(out["probs"])
                 if ev is not None:
                     self.click_total += 1
                     if self.auto_pause and self._pending_snap is None:
                         t_abs = start + C.WIN_N // 2          # 이 window 의 중심
                         self._pending_snap = (t_abs + int(C.SNAP_POST_S * C.SR),
-                                              {"ev": {"label": _CLS.get(ev["cls"], "click"),
+                                              {"ev": {"label": SPEC.label(ev["cls"]),
                                                       "t": 0.0, "score": round(ev["score"], 4)},
+                                               "cls": ev["cls"],     # CAM 대상 — 표시 이름과 분리
                                                "t_abs": t_abs, "pair": [None, None],
                                                "epoch": self.epoch})
                     else:                      # 자동정지 안 하는 모드 → 카운터만 알린다
@@ -259,10 +289,21 @@ class CycleController(threading.Thread):
         except Exception:
             pass
         self.counter.reset()
-        self._need_reset = False
+        self._need_resync = False
         self._froze = False
         self._first_start = None
         self._pending_snap = None
+
+    def _resync_listen(self):
+        """재개 경계 — 엔진 상태만 비우고 카운터 latch 는 보존한다(counter.resync 주석 참조)."""
+        try:
+            self.eng.reset()
+        except Exception:
+            pass
+        self.counter.resync()
+        self._need_resync = False
+        self._froze = False
+        self._first_start = None
 
     def _recover(self, msg):
         try:
@@ -302,9 +343,10 @@ class CycleController(threading.Thread):
         return seg, ew, mp, round(max(0.0, peak - floor), 1)
 
     def _check_snapshot(self):
-        if not self._pending_snap:
+        pend = self._pending_snap              # 한 번만 읽는다 — WS 스레드가 취소할 수 있다
+        if not pend:
             return
-        target, info = self._pending_snap
+        target, info = pend
         if self.ring.write_idx < target:
             return
         self._pending_snap = None
@@ -318,11 +360,11 @@ class CycleController(threading.Thread):
             self._froze = False                # 재검출 허용 (snapshot 만 실패)
             return
         seg, ew, mp, snr = got
-        spec = disp_spec(seg, self.spec_floor)
+        spec = disp_spec(seg, self.spec_floor, C.SNAP_HOP)
         # CAM 은 표시 구간(seg)이 아니라 **검출 트리거 window(ew)** 를 설명한다(Codex R5).
         # ew=[t-0.5,t+0.5] → 표시 seg=[t-0.25,t+0.75]: 왼쪽 0.25 는 표시 밖, 오른쪽 0.25 는 비운다.
         cam = None
-        cls = {"click_1": 1, "click_2": 2}.get(info["ev"]["label"])
+        cls = info.get("cls")                  # 표시 이름(display_names)에서 역파싱하지 않는다
         if cls is not None:
             u8 = self.eng.cam(ew, cls, spec["cols"])
             if u8 is not None:
@@ -363,7 +405,7 @@ class CycleController(threading.Thread):
         seg, _ew, mp, snr = got
         msg = {"type": "freeze", "manual": True, "rev": self.rev,
                "ev": None, "pair": [None, None],
-               "wav_b64": wav_b64(seg), "spec": disp_spec(seg, self.spec_floor),
+               "wav_b64": wav_b64(seg), "spec": disp_spec(seg, self.spec_floor, C.SNAP_HOP),
                "map": mp, "snr_db": snr,
                "click_total": self.click_total, "count_rev": self.count_rev}
         self.last_freeze = msg
@@ -377,7 +419,12 @@ class CycleController(threading.Thread):
         if now - getattr(self, "_last_amb", 0) < C.AMBIENT_EMBED_PERIOD:
             return
         self._last_amb = now
-        x, y = self.atlas.transform(self.eng.embed(w))
+        try:
+            x, y = self.atlas.transform(self.eng.embed(w))
+        except Exception as e:                 # 지도만 포기하고 검출은 계속
+            print(f"[cycle] WARN ambient embed failed - disabling map: {e}")
+            self.eng.embed_ok = False
+            return
         self.emit({"type": "ambient", "x": x, "y": y})
 
     def _update_floor(self, w, db):
@@ -428,7 +475,7 @@ class CycleController(threading.Thread):
                 "starved_s": round(time.time() - self._last_win, 1),
                 "src_alive": bool(self.src and getattr(self.src, "is_alive", lambda: True)()),
                 "slicer_alive": bool(sl and sl.is_alive()),
-                "counter": self.counter.state(),
+                "counter": self.counter.state(), "listen_gen": self.listen_gen,
                 "resyncs": getattr(sl, "resyncs", 0),
                 "backpressure": getattr(sl, "backpressure", 0)}
 

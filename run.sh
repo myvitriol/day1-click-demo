@@ -14,7 +14,10 @@ cd "$HERE"
 VPY="$HERE/.venv/bin/python"
 [ -x "$VPY" ] || VPY="$HERE/.venv/Scripts/python.exe"
 
+# .ready 는 setup 이 **검증까지 통과**했을 때만 생긴다. import 만 되는 반쪽 설치를
+# 준비 완료로 착각하지 않기 위한 표식이다.
 need_setup=0
+[ -f "$HERE/.ready" ] || need_setup=1
 [ -x "$VPY" ] || need_setup=1
 if [ -x "$VPY" ]; then
   "$VPY" -c "import fastapi, uvicorn, torch, DAL" >/dev/null 2>&1 || need_setup=1
@@ -24,7 +27,15 @@ if [ "$need_setup" = "1" ]; then
   echo "=================================================="
   echo " First run - preparing the environment (5-15 min)"
   echo "=================================================="
-  bash "$HERE/setup.sh"
+  LOG="$HERE/.setup.log"
+  if bash "$HERE/setup.sh" 2>&1 | tee "$LOG"; then
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$HERE/.ready"
+  else
+    echo
+    echo "Setup failed. Full log: $LOG"
+    echo "Fix the reported problem and run 'bash run.sh' again."
+    exit 1
+  fi
   VPY="$HERE/.venv/bin/python"; [ -x "$VPY" ] || VPY="$HERE/.venv/Scripts/python.exe"
   echo
 fi

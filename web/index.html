@@ -83,7 +83,7 @@
   .hstat .v.hot{color:var(--pink);font-size:24px}
 
   main{flex:1;min-height:0;display:grid;grid-template-columns:1.42fr 1fr;gap:12px;padding:12px}
-  .left{display:grid;grid-template-rows:1fr 1fr auto;gap:12px;min-height:0;min-width:0}
+  .left{display:grid;grid-template-rows:1fr 1fr;gap:12px;min-height:0;min-width:0}
   .card{background:var(--card);border-radius:var(--r);box-shadow:0 2px 8px rgba(50,48,49,.09);
         padding:13px 17px 11px;display:flex;flex-direction:column;min-height:0;min-width:0}
   .ch{display:flex;align-items:baseline;gap:9px;flex:none;margin-bottom:8px}
@@ -99,6 +99,8 @@
        padding:2px 0;text-align:right;z-index:1}
   .cap{flex:none;font-size:12px;color:var(--cap);line-height:1.55;margin-top:7px;
        border-top:1px solid var(--hair);padding-top:7px}
+  /* 한 줄 고정 — 넘치면 줄바꿈 대신 잘라낸다(패널 높이가 흔들리지 않게) */
+  .cap.one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
   #mapcard{display:flex;flex-direction:column;min-height:0}
   .lg{display:flex;flex-wrap:wrap;gap:13px;font-size:12px;color:var(--tx2);margin-top:7px;flex:none}
@@ -129,14 +131,18 @@
   .dbox .v.pink{color:var(--pinkdeep)}
   .dempty{font-size:12px;color:var(--tx3);margin-top:7px}
 
-  #freeze{display:none;background:var(--card);border:2px solid var(--pink);
-          border-radius:var(--r);padding:12px 16px;box-shadow:0 2px 8px rgba(50,48,49,.09)}
-  #freeze .r1{display:flex;align-items:center;gap:12px}
-  #freeze h3{font-size:18px;white-space:nowrap}
-  #freeze .meta{font-size:12px;color:var(--tx2);font-family:var(--mono);
-                overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #freeze .btns{margin-left:auto;display:flex;gap:7px;flex:none}
-  #freeze button{padding:8px 13px;font-size:12px}
+  /* 정지 화면의 소리 재생 — 스펙트로그램 패널 안에 둔다(별도 바 없이) */
+  button.mini{padding:5px 11px;font-size:11.5px;border-radius:8px;flex:none;margin-left:9px;
+              min-width:104px}
+  button.mini:active:not(:disabled){transform:scale(.94)}
+  button.mini.tap{animation:btap .28s ease-out}
+  @keyframes btap{0%{transform:scale(.92);box-shadow:0 0 0 0 rgba(0,179,156,.45)}
+                  100%{transform:scale(1);box-shadow:0 0 0 10px rgba(0,179,156,0)}}
+  button.mini.playing{background:var(--acc);border-color:var(--acc);color:#fff}
+  button.mini.playing::before{content:"";display:inline-block;width:0;height:0;
+    border-left:7px solid currentColor;border-top:4.5px solid transparent;
+    border-bottom:4.5px solid transparent;margin-right:6px;vertical-align:middle}
+  #specTag.frz{color:var(--pinkdeep);font-weight:700}
 
   #toast{position:fixed;top:68px;left:50%;transform:translateX(-50%);z-index:30;display:none;
          background:#3a1d22;color:#ffdde2;font-size:13px;padding:10px 18px;border-radius:10px;
@@ -176,27 +182,16 @@
 
     <section class="card">
       <div class="ch"><h2>스펙트로그램</h2><span class="sub">소리의 높낮이</span>
-        <span class="right">파형과 같은 시간 흐름</span></div>
+        <span class="right" id="specTag">파형과 같은 시간 흐름</span>
+        <button id="fzPlay" class="mini" disabled>방금 소리 재생</button></div>
       <div class="plot inset">
         <div class="yax"><span>높은 음</span><span>낮은 음</span></div>
         <canvas id="spec"></canvas>
       </div>
-      <div class="cap">노랗게 밝을수록 그 높이의 소리가 세다. 클릭은 낮은 음부터 높은 음까지
-        한꺼번에 퍼져 <b>세로줄 하나</b>로 보인다.
-        <span style="color:var(--tx3)">설비 hum 처럼 계속 나는 소리는 빼고 표시 — 변하는 소리만 남긴다
-        (표시 전용, 모델 입력과 무관).</span></div>
+      <div class="cap one">밝을수록 그 높이의 소리가 세다. 클릭은 <b>세로줄 하나</b>로 보인다.
+        <span style="color:var(--tx3)">계속 나는 소리는 빼고 표시(표시 전용).</span></div>
     </section>
 
-    <div id="freeze">
-      <div class="r1">
-        <h3 id="fzTitle">화면 정지</h3>
-        <span class="meta" id="fzMeta"></span>
-        <div class="btns">
-          <button id="fzPlay">방금 소리 재생</button>
-          <button id="fzResume" class="primary">현장 듣기 재개</button>
-        </div>
-      </div>
-    </div>
   </div>
 
   <section class="card" id="mapcard">
@@ -204,7 +199,7 @@
       <span class="right" id="atlasNote"></span></div>
     <div class="plot"><canvas id="map"></canvas></div>
     <div class="lg">
-      <span><i style="background:rgba(51,49,50,.65)"></i>기존 체결음</span>
+      <span><i style="background:#e96e8a"></i>기존 체결음</span>
       <span><i style="background:#bebbbd"></i>그 밖의 소리</span>
       <span><i style="background:#ff3d59"></i>★ 잡은 클릭</span>
       <span style="color:var(--tx3)">원 = 판정 기준</span>
@@ -255,7 +250,10 @@ function virRGB(v,o,a){const x=Math.max(0,Math.min(.9999,v))*31,i=x|0,f=x-i,
 
 /* 상태 — frozen 의 진실은 서버. 클릭 시 낙관적으로 뒤집고 이벤트로 확정,
    2초 넘게 어긋나 있으면 status 로 치유한다. */
+/* lag = 배열 끝에서 화면 오른쪽 끝까지의 거리(프레임, 소수). 렌더 루프가 줄이고
+   데이터 도착이 늘린다. xf = 전환 crossfade 상태, fzGain = 정지 파형 배율. */
 const S={env:[],spec:[],ambient:[],stars:[],atlas:null,level:0,frozen:false,manual:false,
+  lag:30,vel:100,xf:null,fzGain:1,fzUrl:null,
          detect:true,rev:0,countRev:0,lastToggle:0,fzBuf:null,fzSpec:null,gain:12,
          floorLin:0.01,conn:false,sep:0};
 /* 서버 rev 보다 낡은 상태 메시지는 버린다 — in-flight 역전 차단 */
@@ -321,6 +319,7 @@ const H={
   },
   stream(m){
     if(m.env&&m.env.length){S.env.push(...m.env);
+      S.lag+=m.env.length;                 // 새로 도착한 만큼 뒤로 밀린다(렌더가 소비)
       if(S.env.length>2400)S.env.splice(0,S.env.length-2400);}
     if(m.spec)pushSpec(m.spec);
     const st=m.status;
@@ -345,8 +344,10 @@ const H={
     if(st.qdepth>32)bad.push(`추론 적체 ${st.qdepth}`);
     if(st.resyncs)bad.push(`재동기 ${st.resyncs}회`);
     wn.textContent=bad.join(" · ");wn.style.display=bad.length?"block":"none";
-    if(!S.frozen){drawWave();drawSpec();}
-    if(!animOn&&m.seq%5===0)drawMap();       /* 평시 2Hz — 애니메이션 중엔 rAF 가 그린다 */
+    /* 그리기는 렌더 루프(rAF)가 한다 — 여기서 그리면 10Hz 로 10px 씩 튄다 */
+    /* 지도는 렌더 루프가 그린다(평시 2Hz · 애니메이션 중 매 프레임). 예전에는 여기서
+       animOn 을 보고 불렀는데, kickAnim 을 렌더 루프로 옮길 때 그 변수가 사라져
+       5 tick 마다 ReferenceError 로 stream 핸들러가 중단됐다 — 지도가 빈 채로 남았다. */
   },
   ambient(m){S.ambient.push({x:m.x,y:m.y,t:Date.now()});
     if(S.ambient.length>70)S.ambient.shift();},
@@ -366,21 +367,12 @@ const H={
     }else if(!m.manual&&quiet&&cntOk&&m.map){
       S.stars.push({x:m.map.x,y:m.map.y,t:Date.now()-8000});   /* 별만 복원, ping 없음 */
     }
-    $("freeze").style.display="block";
-    if(m.manual){
-      $("fzTitle").textContent="화면 정지";
-      $("fzTitle").style.color="var(--tx)";
-      $("freeze").style.borderColor="var(--blk)";
-      $("fzMeta").textContent=`방금 지나간 1.0초 · SNR ${m.snr_db} dB`;
-    }else{
-      $("fzTitle").textContent="클릭 검출 — 자동 정지";
-      $("fzTitle").style.color="var(--pinkdeep)";
-      $("freeze").style.borderColor="var(--pink)";
-      $("fzMeta").textContent=`${m.ev.label} · score ${m.ev.score} · SNR ${m.snr_db} dB`;
-    }
+    /* 별도 바 없이: 상태는 상단 badge, 근거 수치는 "마지막 검출" 패널이 갖는다 */
+    setSpecTag(m.manual?`정지 · 방금 지나간 1.0초`:`정지 · 잡힌 1.0초 확대`);
+    $("fzPlay").disabled=false;
     if(!m.manual&&m.ev&&cntOk){                /* 리셋 이전 세대의 검출은 패널 복원 안 함 */
       const LV={"-1":"느슨","0":"보통","1":"엄격"};
-      $("diLabel").textContent=m.ev.label==="click_1"?"클릭 1":m.ev.label==="click_2"?"클릭 2":m.ev.label;
+      $("diLabel").textContent=m.ev.label;    /* 서버가 표시 이름(display_names)을 준다 */
       $("diLabel").className="chip hot";
       $("diTime").textContent=quiet?"이전 세션 검출":new Date().toTimeString().slice(0,8);
       $("diScore").innerHTML=Math.round(m.ev.score*100)+"<small> %</small>";
@@ -391,18 +383,25 @@ const H={
     }
     S.fzSpec=decodeSpec(m.spec);
     S.fzCam=(m.cam&&!m.manual)?decodeSpec(m.cam):null;
-    drawFreezeSpec();
     S.fzBuf=null;S.fzSnr=m.snr_db;
+    /* 스펙트로그램과 파형(WAV 비동기 decode)이 **둘 다** 준비된 뒤에 한 번만 전환한다.
+       예전에는 spec 이 즉시 바뀌고 파형은 "준비 중…" → 완성본으로 다시 튀어 두 번
+       움직였다. 준비되기 전에는 직전 live 화면이 그대로 멈춰 있다. */
+    let started=false;
+    const go=()=>{if(started)return; started=true;
+      if(S.xf&&S.xf.t0==null) S.xf.t0=performance.now();};
     try{
       const b=atob(m.wav_b64),u=new Uint8Array(b.length);
       for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
-      getCtx().decodeAudioData(u.buffer).then(buf=>{S.fzBuf=buf;drawFreezeWave();});
-    }catch(e){}
-    drawFreezeWave();
+      if(S.fzUrl){URL.revokeObjectURL(S.fzUrl);S.fzUrl=null;}
+      S.fzUrl=URL.createObjectURL(new Blob([u],{type:"audio/wav"}));  /* 재생용 — 즉시 */
+      getCtx().decodeAudioData(u.buffer.slice(0)).then(buf=>{S.fzBuf=buf;go();}).catch(go);
+    }catch(e){go();}
+    setTimeout(go,250);                  // decode 가 늦어도 화면은 바뀐다
     drawMap();
   },
   resume(m){if(m&&!acceptRev(m))return;
-    setFrozen(false,false);hideFreeze();drawWave();drawSpec();},
+    setFrozen(false,false);hideFreeze();},          /* 그리기는 렌더 루프가 한다 */
   dial(m){S.level=m.level;paintDial();drawMap();},
   device(m){S.noSrc = m.device.kind==="none"; $("dot").classList.toggle("off",S.noSrc);
     renderDevice(m.device,m.inputs);
@@ -425,17 +424,12 @@ $("bPlay").onclick=()=>{
   S.lastToggle=Date.now();
   if(toPause){                       // 낙관적 정지 — 다음 프레임부터 즉시 멈춘 화면
     setFrozen(true,true);
-    $("freeze").style.display="block";
-    $("fzTitle").textContent="화면 정지";
-    $("fzTitle").style.color="var(--tx)";
-    $("freeze").style.borderColor="var(--blk)";
-    $("fzMeta").textContent="정지 화면 준비 중…";
+    setSpecTag("정지 화면 준비 중…");
   }else{
     H.resume({});                    // 낙관적 재개
   }
   send({cmd:toPause?"pause":"resume"});
 };
-$("fzResume").onclick=()=>{S.lastToggle=Date.now();H.resume({});send({cmd:"resume"});};
 $("bDetect").onclick=()=>{S.detect=!S.detect;paintDetect();badge();
   send({cmd:"detect",on:S.detect});};
 $("bReset").onclick=()=>send({cmd:"reset_count"});
@@ -444,10 +438,41 @@ function paintDetect(){const b=$("bDetect");
   $("detTx").textContent=S.detect?"감지 ON":"감지 OFF";}
 let ACtx=null;
 function getCtx(){if(!ACtx)ACtx=new (window.AudioContext||window.webkitAudioContext)();return ACtx;}
-$("fzPlay").onclick=()=>{if(!S.fzBuf)return;
-  const c=getCtx();
-  c.resume().then(()=>{const s2=c.createBufferSource();
-    s2.buffer=S.fzBuf;s2.connect(c.destination);s2.start();});};
+/* 재생은 <audio> + Blob URL 로 한다. 예전에는 AudioContext 로 재생했는데 맥에서 안
+   울렸다 — ①resume().then() 안에서 start() 하면 user gesture 컨텍스트가 Promise
+   콜백으로 넘어가며 소실된다 ②freeze 가 올 때(gesture 없이) AudioContext 를 만들어
+   suspended 로 시작한다 ③재생이 파형 표시용 decode 결과(S.fzBuf)에 묶여 있어
+   decode 가 실패하면 소리도 안 났다. 이제 재생과 파형 표시는 서로 독립이다. */
+const AEL=new Audio(); AEL.preload="auto";
+AEL.addEventListener("playing",()=>paintPlayBtn(true));
+AEL.addEventListener("ended",()=>paintPlayBtn(false));
+AEL.addEventListener("error",()=>{paintPlayBtn(false);playViaCtx();});
+AEL.addEventListener("pause",()=>paintPlayBtn(false));
+function paintPlayBtn(on){
+  const b=$("fzPlay");
+  b.classList.toggle("playing",on);
+  b.textContent=on?"재생 중…":"방금 소리 재생";}
+$("fzPlay").onclick=()=>{
+  const b=$("fzPlay");
+  b.classList.remove("tap");void b.offsetWidth;b.classList.add("tap");   /* 눌린 느낌 */
+  if(!S.fzUrl){toast("재생할 소리가 아직 준비되지 않았습니다");return;}
+  try{
+    AEL.pause();AEL.currentTime=0;
+    if(AEL.src!==S.fzUrl) AEL.src=S.fzUrl;
+    const pr=AEL.play();                        /* gesture 안에서 즉시 — 기다리지 않는다 */
+    paintPlayBtn(true);
+    if(pr&&pr.catch) pr.catch(()=>{paintPlayBtn(false);playViaCtx();});
+  }catch(e){paintPlayBtn(false);playViaCtx();}};
+function playViaCtx(){                          /* <audio> 가 막히면 AudioContext 로 */
+  if(!S.fzBuf){toast("이 브라우저에서 재생이 막혔습니다");return;}
+  try{
+    const c=getCtx();
+    if(c.state==="suspended") c.resume();        /* 기다리지 않는다 — gesture 유지 */
+    const s2=c.createBufferSource();
+    s2.buffer=S.fzBuf;s2.connect(c.destination);s2.start();
+    paintPlayBtn(true);
+    s2.onended=()=>paintPlayBtn(false);
+  }catch(e){toast("재생 실패: "+e.message);}}
 $("pills").onclick=e=>{const p=e.target.closest(".pill");if(!p)return;
   send({cmd:"dial",level:+p.dataset.l});};
 
@@ -474,8 +499,28 @@ function renderDevice(dev,inputs){
     nm.textContent=dev.name.split("/").pop();
   }
 }
-function setFrozen(f,manual){S.frozen=f;S.manual=!!manual;badge();paintPlay();}
-function hideFreeze(){$("freeze").style.display="none";S.fzBuf=null;S.fzSpec=null;S.fzCam=null;}
+function setFrozen(f,manual){
+  /* 정지↔실시간 경계에서 직전 화면을 떠둔다 — 렌더 루프가 그것으로 crossfade 한다.
+     예전에는 같은 canvas 를 바꿔놓고 opacity 를 0.2→1 로 올렸는데, 그건 교차가 아니라
+     "어두워졌다 켜짐"이었고 변하지도 않는 소리의 지도까지 함께 깜빡였다. */
+  if(S.frozen!==f){
+    S.xf={wave:snapCanvas(W), spec:snapCanvas(P), t0:null, dur:170, wait:f};
+    if(f){ S.fzGain=S.gain; }            // 정지 파형은 실시간 배율을 이어받는다
+    else { S.xf.t0=performance.now(); }  // 재개는 live 데이터가 이미 있으니 즉시
+  }
+  S.frozen=f;S.manual=!!manual;badge();paintPlay();}
+function snapCanvas(o){
+  const c=document.createElement("canvas");
+  c.width=o.c.width;c.height=o.c.height;
+  c.getContext("2d").drawImage(o.c,0,0);
+  return c;}
+function setSpecTag(t){const e=$("specTag");e.textContent=t;e.classList.add("frz");}
+function hideFreeze(){
+  const e=$("specTag");e.textContent="파형과 같은 시간 흐름";e.classList.remove("frz");
+  $("fzPlay").disabled=true; paintPlayBtn(false);
+  try{AEL.pause();}catch(_){}
+  if(S.fzUrl){URL.revokeObjectURL(S.fzUrl);S.fzUrl=null;}
+  S.fzBuf=null;S.fzSpec=null;S.fzCam=null;}
 function badge(){const b=$("badge");
   if(S.frozen&&!S.manual){b.className="badge frz";b.textContent="클릭 검출 — 재생을 눌러 계속";}
   else if(S.frozen){b.className="badge man";b.textContent="정지 — 재생을 누르면 이어집니다";}
@@ -498,8 +543,15 @@ function drawWave(){
   const {g,w,h}=W; if(!w) return;
   g.clearRect(0,0,w,h);
   const cy=h/2, amp=h*0.44;
-  const n=Math.min(S.env.length,Math.floor(w));
-  const off=S.env.length-n;
+  /* 1프레임 = 1px = 10ms (스펙트로그램과 같은 격자). 버퍼가 폭만큼 안 찼을 때도
+     오른쪽에 붙여 그린다 — 왼쪽부터 자라지 않고 처음부터 오른쪽→왼쪽으로 흐른다.
+     오른쪽 끝은 배열 끝에서 S.lag 프레임 앞이고, 소수부는 서브픽셀로 밀어 60fps
+     연속 이동을 만든다. */
+  const sub=S.lag-Math.floor(S.lag);
+  const end=S.env.length-Math.floor(S.lag);
+  if(end<=0) return;
+  const n=Math.min(end,Math.floor(w));
+  const off=end-n, x0=Math.floor(w)-n-sub;
   let peak=1e-4;
   for(let i=0;i<n;i++){const e=S.env[off+i];
     const a=Math.max(Math.abs(e[0]),Math.abs(e[1])); if(a>peak)peak=a;}
@@ -514,15 +566,18 @@ function drawWave(){
   g.beginPath();g.moveTo(0,cy-bh+.5);g.lineTo(w,cy-bh+.5);
   g.moveTo(0,cy+bh-.5);g.lineTo(w,cy+bh-.5);g.stroke();g.setLineDash([]);
 
-  const hot=bh*1.9;
+  /* 매 프레임 도는 경로라 컬럼마다 stroke() 하지 않고 색별로 path 를 모아 2회만 그린다 */
+  const hot=bh*1.9, pHot=new Path2D(), pDim=new Path2D();
   for(let i=0;i<n;i++){
     const e=S.env[off+i];
     let lo=cy+Math.max(-amp,Math.min(amp,e[0]*G*amp));
     let hi=cy+Math.max(-amp,Math.min(amp,e[1]*G*amp));
     if(hi-lo<1){hi=lo+1;}
-    g.strokeStyle=(Math.max(cy-lo,hi-cy)>hot)?"#00b39c":"#a9a6a8";
-    g.beginPath();g.moveTo(i+.5,lo);g.lineTo(i+.5,hi);g.stroke();
+    const pp=(Math.max(cy-lo,hi-cy)>hot)?pHot:pDim;
+    pp.moveTo(x0+i+.5,lo);pp.lineTo(x0+i+.5,hi);
   }
+  g.strokeStyle="#a9a6a8";g.stroke(pDim);
+  g.strokeStyle="#00b39c";g.stroke(pHot);
   g.fillStyle="#706e70";g.font="600 9.5px -apple-system,sans-serif";
   g.fillText("배경 소음",6,cy-bh-5);
 }
@@ -530,20 +585,25 @@ function drawWave(){
 function drawFreezeWave(){
   const {g,w,h}=W; if(!w) return;
   g.clearRect(0,0,w,h);
-  if(!S.fzBuf){g.fillStyle="#a8a6a8";g.font="11px sans-serif";
-    g.fillText("정지 화면 준비 중…",8,h/2);return;}
+  if(!S.fzBuf) return;                 // 아직 준비 안 됨 — 직전 live 화면을 그대로 둔다
   const d=S.fzBuf.getChannelData(0), cy=h/2, amp=h*0.44, step=Math.max(1,Math.ceil(d.length/w));
   let peak=1e-4; for(let j=0;j<d.length;j+=7){const a=Math.abs(d[j]);if(a>peak)peak=a;}
-  const G=Math.min(60,0.92/peak);
+  /* 배율을 여기서 새로 잡으면 정지 순간 파형 크기가 튄다. 실시간 배율(S.fzGain,
+     setFrozen 에서 S.gain 을 물려받음)에서 출발해 렌더 루프가 목표로 서서히 옮긴다. */
+  S.fzGainT=Math.min(60,0.92/peak);
+  const G=S.fzGain||S.fzGainT;
+  /* 실시간과 같은 색을 쓴다. 예전에는 20~58% 를 핑크로 칠했는데 그 범위는 근거 없는
+     하드코딩이라 실제 클릭 위치와 어긋났고, 정지 순간 화면이 확 바뀌어 보이는 주된
+     원인이었다. 검출 시점은 아래 세로선 하나로만 알린다. */
+  const pw=new Path2D();
   for(let i=0;i<w;i++){
     let mn=0,mx=0;
     for(let j=i*step;j<Math.min((i+1)*step,d.length);j++){
       if(d[j]<mn)mn=d[j]; if(d[j]>mx)mx=d[j];}
-    const on=!S.manual&&(i>w*0.20&&i<w*0.58);
-    g.strokeStyle=on?"#ff3d59":"#a9a6a8";
     const lo=cy+Math.max(-amp,mn*G*amp), hi=cy+Math.min(amp,mx*G*amp);
-    g.beginPath();g.moveTo(i+.5,lo);g.lineTo(i+.5,Math.max(hi,lo+1));g.stroke();
+    pw.moveTo(i+.5,lo);pw.lineTo(i+.5,Math.max(hi,lo+1));
   }
+  g.strokeStyle="#a9a6a8";g.lineWidth=1;g.stroke(pw);
   if(!S.manual){
     g.strokeStyle="rgba(211,33,63,.55)";g.setLineDash([3,4]);
     g.beginPath();g.moveTo(w*0.25,0);g.lineTo(w*0.25,h);g.stroke();g.setLineDash([]);
@@ -593,22 +653,36 @@ function pushSpec(sp){
 }
 const OFF=document.createElement("canvas");
 const OFFG=OFF.getContext("2d");
-function blit(g,cols,w,h){
+let IMGC=null;                                          /* blit 픽셀 버퍼 재사용 */
+const OFF2=document.createElement("canvas");            /* CAM 마스크 전용 */
+const OFF2G=OFF2.getContext("2d");
+function blit(g,cols,w,h,x0=0){
   const n=cols.length;
   if(!n){g.fillStyle="#440154";g.fillRect(0,0,w,h);return;}
   const rows=cols[0].length;
-  if(OFF.width!==n||OFF.height!==rows){OFF.width=n;OFF.height=rows;}
-  const img=OFFG.createImageData(n,rows), a=img.data;
+  if(OFF.width!==n||OFF.height!==rows){OFF.width=n;OFF.height=rows;IMGC=null;}
+  if(!IMGC||IMGC.width!==n||IMGC.height!==rows) IMGC=OFFG.createImageData(n,rows);
+  const img=IMGC, a=img.data;         /* 매 프레임 도는 경로 — 버퍼를 재사용한다 */
   for(let c=0;c<n;c++){const col=cols[c];
     for(let r=0;r<rows;r++) virRGB(col[r]/255,((rows-1-r)*n+c)*4,a);}
   OFFG.putImageData(img,0,0);
   g.imageSmoothingEnabled=true;
-  g.drawImage(OFF,0,0,n,rows,0,0,w,h);
+  g.drawImage(OFF,0,0,n,rows,x0,0,w,h);
 }
 function drawSpec(){
   const {g,w,h}=P; if(!w) return;
-  const n=Math.min(S.spec.length,Math.floor(w));
-  blit(g,S.spec.slice(S.spec.length-n),w,h);
+  /* 컬럼 하나 = 10ms 로 고정이다. 버퍼가 아직 화면 폭만큼 안 찼는데 폭 w 전체로
+     늘려 그리면, 컬럼이 쌓일수록 같은 폭에 더 많이 들어가 무늬가 좁아지며 왼쪽으로
+     밀린다 — 흐르는 게 아니라 "왼쪽에 누적되며 줄어드는" 것으로 보인다(초반 수 초).
+     그래서 채워진 만큼의 폭만 계산해 오른쪽에 붙인다: 시작부터 오른쪽→왼쪽 흐름. */
+  const view=Math.floor(w);                       // 화면에 담는 컬럼 수 = 시간 폭
+  const sub=S.lag-Math.floor(S.lag);              // 파형과 같은 서브픽셀 오프셋
+  const end=S.spec.length-Math.floor(S.lag);
+  g.fillStyle="#440154";g.fillRect(0,0,w,h);      // 아직 안 찬 왼쪽은 배경
+  if(end<=0) return;
+  const n=Math.min(end,view);
+  const px=w*n/view;                              // 컬럼당 px 를 항상 w/view 로 고정
+  blit(g,S.spec.slice(end-n,end),px,h,w-px-sub);
 }
 function drawFreezeSpec(){
   const {g,w,h}=P; if(!w) return;
@@ -622,15 +696,21 @@ function drawFreezeSpec(){
     let hi=1;
     for(let c=0;c<cols;c++)for(let r=0;r<rows;r++)if(S.fzCam[c][r]>hi)hi=S.fzCam[c][r];
     const TH=hi*0.55;
+    /* 어둡게 덮는 마스크를 offscreen RGBA 한 장으로 만들어 한 번에 얹는다.
+       칸마다 fillRect 하면 96x392 = 3.7만 회가 되어 맥에서 눈에 보이게 버벅인다. */
+    if(OFF2.width!==cols||OFF2.height!==rows){OFF2.width=cols;OFF2.height=rows;}
+    const mi=OFF2G.createImageData(cols,rows), md=mi.data;
     let x0=1e9,x1=-1,y0=1e9,y1=-1;
     for(let c=0;c<cols;c++){const col=S.fzCam[c];
       for(let r=0;r<rows;r++){
-        const v=col[r]/hi;
-        const a=Math.max(0,(1-v))*0.80;         // 기여 0 → 80% 어둡게, 최대 → 그대로
-        if(a>0.02){g.fillStyle=`rgba(6,3,14,${a})`;
-          g.fillRect(c*cw2,h-(r+1)*ch2,cw2+0.6,ch2+0.6);}
+        const a=Math.max(0,(1-col[r]/hi))*0.80;   // 기여 0 → 80% 어둡게, 최대 → 그대로
+        const o=((rows-1-r)*cols+c)*4;
+        md[o]=6;md[o+1]=3;md[o+2]=14;md[o+3]=(a*255)|0;
         if(col[r]>=TH){if(c<x0)x0=c; if(c>x1)x1=c; if(r<y0)y0=r; if(r>y1)y1=r;}
       }}
+    OFF2G.putImageData(mi,0,0);
+    g.imageSmoothingEnabled=true;
+    g.drawImage(OFF2,0,0,cols,rows,0,0,w,h);
     if(x1>=0){                                   /* 핵심 영역 테두리 */
       const bx=x0*cw2, bw=(x1-x0+1)*cw2, by=h-(y1+1)*ch2, bh=(y1-y0+1)*ch2;
       g.strokeStyle="#ff3d59";g.lineWidth=2;g.setLineDash([5,4]);
@@ -656,10 +736,16 @@ function drawFreezeSpec(){
 let VP=null;
 function fitViewport(){
   const pts=(S.atlas&&S.atlas.points)||[];
-  if(pts.length<8){VP=null;return;}
-  const xs=pts.map(p=>p.x).sort((a,b)=>a-b);
-  const ys=pts.map(p=>p.y).sort((a,b)=>a-b);
-  VP={xs,ys,x0:xs[0],x1:xs[xs.length-1],y0:ys[0],y1:ys[ys.length-1]};
+  /* layout(재배치된 지도)이 있으면 quantile 을 쓰지 않는다. layout 이 이미 "무리는
+     둥글게 뭉치고 서로 떨어뜨린다"를 정해놨는데, quantile 은 정의상 **밀집 무리를
+     펼치는** 매핑이라 그 배치를 무효화한다 — 0.28~0.56 으로 뭉쳐 놓은 무리가 화면에서
+     대각선으로 다시 흩뿌려졌다. jitter(겹침 방지)는 그대로 쓴다. */
+  const useQ = pts.length>=8 && !(S.atlas&&S.atlas.layout&&S.atlas.layout.length);
+  if(useQ){
+    const xs=pts.map(p=>p.x).sort((a,b)=>a-b);
+    const ys=pts.map(p=>p.y).sort((a,b)=>a-b);
+    VP={xs,ys,x0:xs[0],x1:xs[xs.length-1],y0:ys[0],y1:ys[ys.length-1]};
+  }else VP=null;
   for(const p of pts){                      /* 겹침 방지용 고정 jitter (표시 전용) */
     const h1=Math.sin((p.x*991+p.y*677)*1e4);
     p.jx=(h1-Math.floor(h1)-.5)*2; 
@@ -704,7 +790,14 @@ function drawMap(){
   for(let gx=10;gx<w;gx+=24)for(let gy=10;gy<h;gy+=24)g.fillRect(gx,gy,1.5,1.5);
   const pts=(S.atlas&&S.atlas.points)||[];
   const clicks=pts.filter(p=>p.cls!=="background");
-  const base=p=>[vx(p.x)*w+(p.jx||0)*7, vy(p.y)*h+(p.jy||0)*7];
+  const LAY=!!(S.atlas&&S.atlas.layout&&S.atlas.layout.length);
+  const JT=LAY?3.5:7;                 /* 재배치 지도는 무리가 작아 흔들림을 줄여야 덩어리로 읽힌다 */
+  /* 좌표는 [0,1]^2 인데 캔버스는 가로로 넓다(예 450x220). 그대로 곱하면 가로로 2배
+     늘어나 둥근 무리가 납작해지고 판정 원이 타원이 된다(실측 종횡비 3.7). 가운데
+     정사각 영역에만 그린다 — 원이 원으로 보이는 유일한 방법이다. */
+  const SQ=Math.min(w,h), OX=(w-SQ)/2, OY=(h-SQ)/2;
+  const MP=(x,y)=>[OX+vx(x)*SQ, OY+vy(y)*SQ];
+  const base=p=>{const m=MP(p.x,p.y);return [m[0]+(p.jx||0)*JT, m[1]+(p.jy||0)*JT];};
 
   /* 1) 기준 무리(anchor) — 변형장의 중심들 */
   const p80of=m=>{if(m.length<2)return 30;
@@ -713,13 +806,13 @@ function drawMap(){
     return ds[Math.floor((ds.length-1)*.8)];};
   const bgB=pts.filter(p=>p.cls==="background").map(base);
   const ckB=clicks.map(base);
-  const CC0=[];
-  for(const q of ckB){
-    let best=null,bd=1e9;
-    for(const c of CC0){const d=Math.hypot(c.sx/c.n-q[0],c.sy/c.n-q[1]);if(d<bd){bd=d;best=c;}}
-    if(best&&bd<Math.min(w,h)*.22){best.sx+=q[0];best.sy+=q[1];best.n++;best.m.push(q);}
-    else CC0.push({sx:q[0],sy:q[1],n:1,m:[q]});
-  }
+  /* 체결음 참조점은 라벨(cls)로 묶는다. 예전에는 거리로 묶어서 같은 종류가 화면
+     크기에 따라 둘로 쪼개졌고, 한쪽이 구석에 작은 무리로 따로 떠 보였다.
+     나중에 click_1 / click_2 로 라벨이 갈리면 자동으로 무리가 둘이 된다. */
+  const byCls={};
+  for(const p of clicks)(byCls[p.cls]||(byCls[p.cls]=[])).push(base(p));
+  const CC0=Object.values(byCls).map(m=>({m,n:m.length,
+    sx:m.reduce((a2,q)=>a2+q[0],0), sy:m.reduce((a2,q)=>a2+q[1],0)}));
   const anchors=[];
   if(bgB.length>=4){
     anchors.push({x:bgB.reduce((a2,q)=>a2+q[0],0)/bgB.length,
@@ -733,7 +826,10 @@ function drawMap(){
   const tgt=Math.min(1,S.stars.length/6);
   S.sep+=(tgt-S.sep)*0.12;
   const sW=0.90-0.10*S.sep;                  /* within: 0.90 → 0.80 조임 */
-  const push=(0.045+0.075*S.sep)*Math.min(w,h);   /* inter: 벌림 px */
+  /* 벌림은 layout 이 이미 두 무리를 떼어놨을 때 아주 약하게만 준다. 그대로 두면
+     무리가 화면 구석까지 밀려 커지고, 판정 원이 화면 경계에 걸려 작아진다(실측:
+     체결음 점의 26% 만 원 안에 들어왔다). 조임(sW)은 그대로 — 그게 실루엣을 올린다. */
+  const push=(0.045+0.075*S.sep)*SQ*(LAY?0.22:1);
 
   /* 3) anchor 목표 위치: 반대 클래스 중심에서 밀어냄 */
   const cks=anchors.filter(a2=>a2.cls==="ck");
@@ -746,8 +842,8 @@ function drawMap(){
     let dx=a2.x-other.x, dy=a2.y-other.y;
     const L=Math.hypot(dx,dy)||1;
     const k=push*(a2.cls==="bg"?0.6:1);
-    a2.tx=Math.max(30,Math.min(w-30,a2.x+dx/L*k));
-    a2.ty=Math.max(30,Math.min(h-30,a2.y+dy/L*k));
+    a2.tx=Math.max(OX+30,Math.min(OX+SQ-30,a2.x+dx/L*k));
+    a2.ty=Math.max(OY+30,Math.min(OY+SQ-30,a2.y+dy/L*k));
   }
 
   /* 4) 변형장 — 라벨 조회 없이 모든 점에 같은 장을 적용 (라이브 점도 동일) */
@@ -760,7 +856,7 @@ function drawMap(){
       sy+=wg*(a2.ty+(y-a2.y)*sW);
       sw+=wg;
     }
-    return [Math.max(8,Math.min(w-8,sx/sw)), Math.max(8,Math.min(h-8,sy/sw))];
+    return [Math.max(OX+8,Math.min(OX+SQ-8,sx/sw)), Math.max(OY+8,Math.min(OY+SQ-8,sy/sw))];
   }
   const P=p=>{const b2=base(p);return W(b2[0],b2[1]);};
 
@@ -782,29 +878,41 @@ function drawMap(){
             cx:m.reduce((s2,q)=>s2+q[0],0)/m.length,
             cy:m.reduce((s2,q)=>s2+q[1],0)/m.length};
   });
-  for(const c of CC)shade(c.m,"rgba(51,49,50,.12)");
+  for(const c of CC)shade(c.m,"rgba(255,61,89,.13)");
 
   for(const p of pts){
     const [X,Y]=P(p), bg2=p.cls==="background";
+    /* 회색 = 그 밖의 소리 / 분홍 = 체결음. 색이 "체결음이냐"를 나타내므로 붉은 ★ 이
+       분홍 무리에 꽂히는 그림이 한눈에 읽힌다(예전에는 둘 다 회색이라 실시간 노이즈와
+       기존 체결음이 헷갈렸다). 스타일은 그리기 **전에** 정한다. */
+    g.fillStyle=bg2?"rgba(190,187,189,.85)":"rgba(233,110,138,.88)";
+    g.lineWidth=1;g.strokeStyle="rgba(255,255,255,.75)";
     g.beginPath();g.arc(X,Y,bg2?5:5.5,0,6.2832);
-    g.fillStyle=bg2?"rgba(190,187,189,.85)":"rgba(51,49,50,.7)";g.fill();
-    if(!bg2){g.lineWidth=1;g.strokeStyle="rgba(255,255,255,.7)";g.stroke();}
+    g.fill();
+    if(!bg2)g.stroke();
   }
   const now=Date.now();
   S.ambient=S.ambient.filter(p=>now-p.t<45000);
   for(const p of S.ambient){
-    const [X,Y]=W(vx(p.x)*w,vy(p.y)*h);
-    g.beginPath();g.arc(X,Y,4,0,6.2832);
-    g.fillStyle=`rgba(150,147,149,${(1-(now-p.t)/45000)*.6})`;g.fill();
+    const [X,Y]=W(...MP(p.x,p.y));
+    /* 일정하게 짙은 회색 — 옅은 회색 기준 무리 위에 또렷이 올라앉게. 예전에는 45초
+       페이드로 알파가 변해 같은 종류인데도 밝기가 들쭉날쭉했다(오래된 점은 거의 안 보임). */
+    g.fillStyle="rgba(118,115,118,.88)";
+    g.beginPath();g.arc(X,Y,4.2,0,6.2832);g.fill();
   }
 
   const RM={"-1":1.25,"0":1.0,"1":0.78};
   const lab=CC.length?CC.reduce((a2,b2)=>a2.n>=b2.n?a2:b2):null;
   const rings=[];
   for(const c of CC){
-    const p80=p80of(c.m);
-    const edge=Math.min(c.cx,c.cy,w-c.cx,h-c.cy)-6;
-    const rad=Math.min(Math.max(20,p80*1.45), edge/1.25, Math.min(w,h)*.24);
+    /* 가장 좁은 원(엄격 = RM 최소)까지도 기존 체결음 점을 **전부** 감싸야 한다.
+       예전에는 p80 기준이라 상위 20% 가 원 밖에 있었다. */
+    const rmax=Math.max(...c.m.map(([x2,y2])=>Math.hypot(x2-c.cx,y2-c.cy)));
+    const RMmin=Math.min(...Object.values(RM));
+    /* 가장 좁은 원(엄격)까지도 점을 전부 감싸는 반경. 화면 경계 제약은 캔버스 전체를
+       기준으로 두되(정사각 밖 여백도 쓸 수 있다) 상한을 넉넉히 잡는다. */
+    const edge=Math.min(c.cx,c.cy,w-c.cx,h-c.cy)-4;
+    const rad=Math.min(Math.max(20,(rmax+6)/RMmin), Math.max(edge,SQ*.20)/RM["-1"], SQ*.46);
     if(rad<12)continue;
     rings.push({c,rad});
     for(const l of ["-1","1"]) ring(g,c.cx,c.cy,rad*RM[l],"rgba(120,118,119,.32)",1.2,true);
@@ -838,7 +946,7 @@ function drawMap(){
   S.stars=S.stars.filter(st=>now-st.t<120000);
   for(const st of S.stars){
     const age=now-st.t;
-    const [X,Y]=W(vx(st.x)*w,vy(st.y)*h);
+    const [X,Y]=W(...MP(st.x,st.y));
     if(age<2200){
       for(const ph of [0,0.5]){
         const f=((age/1100)+ph)%1;
@@ -850,7 +958,7 @@ function drawMap(){
   }
   const last=S.stars[S.stars.length-1];
   if(last&&now-last.t<7000){
-    const [X,Y]=W(vx(last.x)*w,vy(last.y)*h);
+    const [X,Y]=W(...MP(last.x,last.y));
     let inside=false;
     for(const r of rings) if(Math.hypot(X-r.c.cx,Y-r.c.cy)<=r.rad*RM[String(S.level)])inside=true;
     const l1="★ 방금 잡은 소리";
@@ -868,20 +976,59 @@ function drawMap(){
     g.fillStyle="#8a4a55";g.font="11px -apple-system,sans-serif";g.fillText(l2,bx+9,by+32);
   }
 }
-let animOn=false;
-function kickAnim(){                            /* ping 이 살아있는 동안만 rAF */
-  if(animOn)return; animOn=true;
-  (function tick(){
-    const busy=S.stars.some(st=>Date.now()-st.t<2400)||
-               (S.stars.length&&Date.now()-S.stars[S.stars.length-1].t<7200)||
-               Math.abs(Math.min(1,S.stars.length/6)-S.sep)>0.01;
-    drawMap();
-    if(busy)requestAnimationFrame(tick); else animOn=false;
-  })();
+/* ── 렌더 루프 ─────────────────────────────────────────────────────────
+   데이터는 10Hz 로 10프레임씩 뭉텅이로 오지만 화면은 매 프레임 그린다. 예전에는
+   메시지가 올 때만 그려서 초당 10번 10px 씩 계단으로 튀었다. 보간하는 것은 **표시
+   위치**뿐이고 데이터는 건드리지 않는다 — 없는 신호를 만들어 보여주지 않는다.  */
+/* FR = 프레임/초(10ms 격자). 데이터가 10프레임씩 뭉텅이로 오므로 lag 은 톱니로
+   진동한다 — 목표 지연 LAG0 은 그 진폭(±5)보다 넉넉해야 바닥을 쳐서(=화면 순간
+   멈춤) 끊기지 않는다. 아래 값은 시뮬레이션으로 고른 것: 정상·지터±60ms 모두 고갈
+   0회, 프레임당 이동 1.56±0.11px, 표시 지연 약 240ms(사람이 못 느끼는 범위).
+   속도를 EMA 로 완만하게 해서 뭉텅이 도착에 화면이 덜컥이지 않게 한다. */
+const FR=100, LAG0=30, KP=1.4, VTAU=8;
+let tPrev=0, tMap=0;
+function mapBusy(){
+  return S.stars.some(st=>Date.now()-st.t<2400)||
+         (S.stars.length&&Date.now()-S.stars[S.stars.length-1].t<7200)||
+         Math.abs(Math.min(1,S.stars.length/6)-S.sep)>0.01;
 }
+function frame(ts){
+  const dt=Math.min(0.05,(tPrev?ts-tPrev:16)/1000); tPrev=ts;
+  const xf=S.xf, p=(xf&&xf.t0!=null)?Math.min(1,(ts-xf.t0)/xf.dur):0;
+
+  if(!S.frozen){
+    const v=FR+(S.lag-LAG0)*KP;           // 지연이 크면 살짝 빨리 따라잡는다
+    S.vel+=(v-S.vel)*Math.min(1,dt*VTAU);
+    S.lag=Math.max(0,Math.min(240,S.lag-S.vel*dt));
+    drawWave(); drawSpec();
+    if(xf&&xf.t0!=null) fadeOut(xf,p);
+  }else if(xf&&xf.t0!=null){
+    /* 정지 화면. 배율은 실시간에서 이어받아 목표로 서서히 옮긴다(크기 튐 방지) */
+    S.fzGain+=((S.fzGainT||S.fzGain)-S.fzGain)*Math.min(1,dt*5);
+    drawFreezeWave(); drawFreezeSpec();
+    fadeOut(xf,p);
+  }
+  /* xf.t0 가 아직 null = 정지 데이터 준비 대기 → 아무것도 그리지 않는다.
+     canvas 에 직전 live 화면이 그대로 남아 "준비 중…" 빈 화면을 안 보여준다. */
+  if(xf&&p>=1&&Math.abs((S.fzGainT||S.fzGain)-S.fzGain)<0.01) S.xf=null;
+  if(mapBusy()||ts-tMap>500){drawMap();tMap=ts;}   /* 평시 2Hz, 애니메이션 중엔 매 프레임 */
+  requestAnimationFrame(frame);
+}
+function fadeOut(xf,p){                   // 직전 화면을 점점 투명하게 덮는다 = 진짜 crossfade
+  if(p>=1) return;
+  for(const [o,snap] of [[W,xf.wave],[P,xf.spec]]){
+    if(!snap||!o.w) continue;
+    o.g.save(); o.g.globalAlpha=1-p;
+    o.g.drawImage(snap,0,0,o.w,o.h);
+    o.g.restore();
+  }
+}
+function kickAnim(){}                     /* 렌더 루프가 항상 돌아 별도 기동이 필요없다 */
+requestAnimationFrame(frame);
 function ring(g,x,y,r,c,lw,dash){
-  g.beginPath();g.arc(x,y,r,0,6.2832);g.strokeStyle=c;g.lineWidth=lw;
-  if(dash)g.setLineDash([4,6]);g.stroke();g.setLineDash([]);
+  g.strokeStyle=c;g.lineWidth=lw;          /* 스타일을 먼저 — 그려놓고 바꾸면 의도가 흐려진다 */
+  if(dash)g.setLineDash([4,6]);
+  g.beginPath();g.arc(x,y,r,0,6.2832);g.stroke();g.setLineDash([]);
 }
 function star(g,x,y,R,al){
   g.save();g.translate(x,y);g.globalAlpha=Math.max(.4,al);g.beginPath();

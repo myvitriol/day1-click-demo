@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .run.lock
 .lock/
-atlas.json
 sessions/
 sim/
+.ready
+.setup.log

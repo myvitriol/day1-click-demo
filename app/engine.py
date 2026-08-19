@@ -57,14 +57,22 @@ class Engine:
                 if self._bench(base) <= C.BENCH_BUDGET_MS or n == 1:
                     break
         print(f"[engine] postp={'pair (cycle)' if self.pair_postp else 'off - window classifier'}")
+        # shift detector off. postp off 에선 리포트가 어디에도 노출되지 않는데 window 마다
+        # GPU->CPU 복사(wav + per-fold logits)가 쌓인다(30분 9,000 window). Codex R8 지적.
+        # load() 가 이미 'shift-detector=on' 을 찍은 뒤이므로 끈 사실을 다시 남긴다.
+        if getattr(base, "detector", None) is not None:
+            base.detector = None
+            base._cyc.clear()
+            print("[engine] shift-detector disabled (not surfaced under postp=off)")
         self.folds = len(base.models)
         self.p95_ms = self._bench(base, runs=10)
         print(f"[engine] version={self.version} folds={self.folds} p95={self.p95_ms:.0f}ms "
               f"(budget {C.BENCH_BUDGET_MS}ms)")
 
         # shift baseline 은 모든 변형에 동일 적용 (load 와 같은 규칙)
-        bpath = C.WEIGHTS_DIR / f"baseline_{self.version}.json"
-        baseline = json.loads(bpath.read_text()) if bpath.exists() else None
+        # shift detector: postp off 에서는 window 신호만 쌓고 아무 곳에도 보고되지 않는다
+        # (finalize 를 cycle 경계로 부르지 않으므로). 30분에 9,000 window 분 낭비 → 끈다.
+        baseline = None
         algo = self.mani["versions"][self.version].get("postp_algo")
         self.algo = algo or "pair_v1"
 
@@ -82,6 +90,14 @@ class Engine:
                 shift_baseline=baseline, save=False,
             )
         self.level = C.DEFAULT_LEVEL
+
+        # 모델 교체 계약 검증 — 어긋나면 여기서 죽는다(조용히 틀린 화면보다 낫다)
+        from .modelspec import SPEC
+        self.spec = SPEC
+        for w in SPEC.validate(base):
+            print(f"[engine] WARN ModelSpec: {w}")
+        if SPEC.placeholder:
+            print("[engine] NOTE placeholder model - a dedicated day1 model will replace it")
 
         # DAL pin 에 embed()(2026-08-17 add-only 추가분)가 없으면 지도 기능만 끄고 돈다.
         self.embed_ok = hasattr(self.variants[0], "embed") and hasattr(
