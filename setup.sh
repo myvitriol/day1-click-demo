@@ -3,6 +3,10 @@
 # `bash run.sh` calls it automatically on first run.
 #
 #   DAL_PATH=/path/to/DAL bash setup.sh   # DAL elsewhere (default: ../DAL sibling)
+#
+# git pull 뒤에는 이걸 한 번 돌리면 된다(또는 그냥 `bash run.sh` - 커밋이 바뀐 것을
+# 알아채고 스스로 다시 돌린다). 이미 갖춰진 것은 건너뛰므로 재실행이 안전하다.
+#
 #   SKIP_DOCTOR=1 / SKIP_SELFTEST=1       # skip the verification gates
 #   ALLOW_DAL_DRIFT=1                     # tolerate a DAL checkout off the pin
 set -euo pipefail
@@ -97,6 +101,10 @@ else
     || die "selftest failed - engine/golden mismatch, NOT demo-ready (SKIP_SELFTEST=1 to bypass)"
   ok "golden pair matched - demo-ready"
 fi
+
+# run.sh 와 같은 표식을 남긴다 — setup.sh 를 손으로 돌린 뒤 run.sh 가 또 돌지 않게.
+{ git -C "$HERE" rev-parse HEAD 2>/dev/null || echo nogit; date -u +"%Y-%m-%dT%H:%M:%SZ"; } \
+  > "$HERE/.ready"
 
 echo
 echo "${B}Environment ready.${N}"
