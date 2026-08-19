@@ -605,6 +605,7 @@ function drawWave(){
   g.strokeStyle="#00b39c";g.stroke(pHot);
   g.fillStyle="#706e70";g.font="600 9.5px -apple-system,sans-serif";
   g.fillText("배경 소음",6,cy-bh-5);
+  nowLine(g,w,h,"지금");
 }
 
 function drawFreezeWave(){
@@ -703,6 +704,21 @@ function blit(g,cols,w,h,x0=0){
   g.imageSmoothingEnabled=true;
   g.drawImage(OFF,0,0,n,rows,x0,0,w,h);
 }
+/* 실시간 화면의 "지금" 선. 흐름은 오른쪽에서 들어와 왼쪽으로 나가므로 가장 최근
+   시각은 오른쪽 끝이다. 파형·스펙트로그램이 같은 시간 격자(10ms/px)를 쓰기 때문에
+   같은 x 가 같은 시각 — 두 패널의 선이 정확히 맞물린다.
+   (엄밀히는 표시 지연 LAG0 프레임만큼 과거지만 0.3s 라 사람은 구분하지 못한다) */
+function nowLine(g,w,h,label){
+  const x=w-1.5;
+  g.strokeStyle="rgba(0,179,156,.85)";g.lineWidth=1.5;
+  g.beginPath();g.moveTo(x,0);g.lineTo(x,h);g.stroke();
+  if(label){
+    g.font="700 9px -apple-system,sans-serif";
+    const tw=g.measureText(label).width;
+    g.fillStyle="rgba(0,179,156,.9)";
+    g.fillText(label,Math.max(2,x-tw-4),10);
+  }
+}
 function drawSpec(){
   const {g,w,h}=P; if(!w) return;
   /* 컬럼 하나 = 10ms 로 고정이다. 버퍼가 아직 화면 폭만큼 안 찼는데 폭 w 전체로
@@ -717,6 +733,7 @@ function drawSpec(){
   const n=Math.min(end,view);
   const px=w*n/view;                              // 컬럼당 px 를 항상 w/view 로 고정
   blit(g,S.spec.slice(end-n,end),px,h,w-px-sub);
+  nowLine(g,w,h,null);                            /* 파형 쪽에만 글자를 둔다 */
 }
 function drawFreezeSpec(){
   const {g,w,h}=P; if(!w) return;
