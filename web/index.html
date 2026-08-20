@@ -511,7 +511,7 @@ let tauT=null;
 $("tauSl").oninput=e=>{
   S.tau=+e.target.value;$("tauVal").textContent=S.tau.toFixed(2);
   clearTimeout(tauT);tauT=setTimeout(()=>send({cmd:"tau",tau:S.tau}),150);
-  drawMap();};
+  paintDial();drawMap();};
 
 function renderDevice(dev,inputs){
   const sel=$("devSel"), nm=$("devName");
@@ -589,8 +589,18 @@ function paintPlay(){const b=$("bPlay");
   $("playTx").textContent=S.frozen?"재생":"정지";
   $("playIco").className=S.frozen?"ico tri":"ico";
   $("playIco").innerHTML=S.frozen?"":"<i></i><i></i>";}
-function paintDial(){document.querySelectorAll(".pill")
-  .forEach(p=>p.classList.toggle("on",+p.dataset.l===S.level));}
+/* pill 은 tau 가 어느 구간에 있는지 보여준다 — preset 과 정확히 같을 때만 켜면
+   slider 를 조금만 움직여도 전부 꺼져서 "지금 느슨한가 엄격한가"를 읽을 수 없다.
+   경계 = preset 사이 중간값 (0.35/0.55/0.80 이면 0.45 와 0.675). */
+function zoneOf(t){
+  const a=+S.levelTaus["-1"], b=+S.levelTaus["0"], c=+S.levelTaus["1"];
+  if(t<(a+b)/2)return -1;
+  if(t<(b+c)/2)return 0;
+  return 1;
+}
+function paintDial(){const z=zoneOf(S.tau);
+  document.querySelectorAll(".pill")
+  .forEach(p=>p.classList.toggle("on",+p.dataset.l===z));}
 let toastH;
 function toast(s){const t=$("toast");t.textContent=s;t.style.display="block";
   clearTimeout(toastH);toastH=setTimeout(()=>t.style.display="none",3500);}
