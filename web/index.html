@@ -222,12 +222,17 @@
     </div>
 
     <div class="dialbox">
-      <div class="dh"><b>판정 기준</b><span>3단 · 클릭 확률 문턱 0.7 / 0.8 / 0.9</span></div>
+      <div class="dh"><b>판정 기준</b><span>클릭 확률 문턱 — 지금
+        <b id="tauVal" style="color:var(--accdeep)">–</b></span></div>
       <div class="pills" id="pills">
         <div class="pill" data-l="-1">느슨</div>
         <div class="pill on" data-l="0">보통</div>
         <div class="pill" data-l="1">엄격</div>
       </div>
+      <!-- 임시(2026-08-20): 현장 문턱 탐색용 연속 slider. FA/놓침의 균형점을 우리
+           fixture 로는 못 정해서(전 구간 동일 결과) SWE 가 현장에서 직접 찾는다. -->
+      <input type="range" id="tauSl" min="0.30" max="0.99" step="0.01" value="0.55"
+             style="width:100%;accent-color:var(--acc);margin:2px 0 4px">
       <div class="dnote">느슨할수록 민감하게 잡고(놓침 ↓ · 오검출 ↑), 엄격할수록 확실한 것만 잡는다.
         클릭이 잡히면 하나씩 계속 누적된다 — 공정 주기 가정 없음.
         바꾸면 즉시 적용된다.</div>
@@ -259,7 +264,7 @@ function virRGB(v,o,a){const x=Math.max(0,Math.min(.9999,v))*31,i=x|0,f=x-i,
 const S={env:[],spec:[],ambient:[],stars:[],atlas:null,level:0,frozen:false,manual:false,
   lag:30,vel:100,xf:null,fzGain:1,build:null,fzSpan:null,
   snap:{pre_s:0.5,post_s:0.5,pre_frac:0.5},   /* hello 가 덮어쓴다 */
-  xfT:null,fzUrl:null,
+  xfT:null,tau:0.55,levelTaus:{"-1":0.35,"0":0.55,"1":0.80},fzUrl:null,
          detect:true,rev:0,countRev:0,lastToggle:0,fzBuf:null,fzSpec:null,gain:12,
          floorLin:0.01,conn:false,sep:0};
 /* 서버 rev 보다 낡은 상태 메시지는 버린다 — in-flight 역전 차단 */
@@ -320,6 +325,8 @@ const H={
       `${m.model.folds}-fold · p95 ${m.model.p95_ms}ms`;
     if(m.snap) S.snap=m.snap;          /* 검출 시점이 표시 구간의 어디인가 */
     S.atlas=m.atlas; S.level=m.level;
+    if(m.level_taus)S.levelTaus=m.level_taus;
+    if(m.tau!=null)setTau(m.tau);
     $("cnt").textContent=m.click_total;
     $("atlasNote").textContent = m.atlas.fixed
       ? `참조 ${m.atlas.points.length}점${m.atlas.placeholder?" · 예시(임시)":""}`
@@ -396,7 +403,7 @@ const H={
       $("diTime").textContent=quiet?"이전 세션 검출":new Date().toTimeString().slice(0,8);
       $("diScore").innerHTML=Math.round(m.ev.score*100)+"<small> %</small>";
       $("diSnr").innerHTML=m.snr_db+"<small> dB</small>";
-      $("diLevel").textContent=LV[String(S.level)]||S.level;
+      $("diLevel").textContent=LV[String(S.level)]||("문턱 "+S.tau.toFixed(2));
       $("diNth").innerHTML=(m.click_total!==undefined?m.click_total:"–")+"<small> 번째</small>";
       $("diRow").style.display="flex";$("diEmpty").style.display="none";
     }
@@ -424,7 +431,9 @@ const H={
   },
   resume(m){if(m&&!acceptRev(m))return;
     setFrozen(false,false);hideFreeze();},          /* 그리기는 렌더 루프가 한다 */
-  dial(m){S.level=m.level;paintDial();drawMap();},
+  dial(m){S.level=m.level;
+    if(m.tau!=null)setTau(m.tau);
+    paintDial();drawMap();},
   device(m){S.noSrc = m.device.kind==="none"; $("dot").classList.toggle("off",S.noSrc);
     renderDevice(m.device,m.inputs);
     $("devSub").textContent=`${(m.device.sr/1000)|0} kHz · ${m.device.channels}ch`;
@@ -497,6 +506,12 @@ function playViaCtx(){                          /* <audio> 가 막히면 AudioCo
   }catch(e){toast("재생 실패: "+e.message);}}
 $("pills").onclick=e=>{const p=e.target.closest(".pill");if(!p)return;
   send({cmd:"dial",level:+p.dataset.l});};
+function setTau(t){S.tau=+t;$("tauSl").value=S.tau;$("tauVal").textContent=S.tau.toFixed(2);}
+let tauT=null;
+$("tauSl").oninput=e=>{
+  S.tau=+e.target.value;$("tauVal").textContent=S.tau.toFixed(2);
+  clearTimeout(tauT);tauT=setTimeout(()=>send({cmd:"tau",tau:S.tau}),150);
+  drawMap();};
 
 function renderDevice(dev,inputs){
   const sel=$("devSel"), nm=$("devName");
@@ -976,6 +991,16 @@ function drawMap(){
   }
 
   const RM={"-1":1.25,"0":1.0,"1":0.78};
+  /* slider 로 tau 가 preset 사이에 올 수 있다 — 원 반경은 tau 에 연속으로 잇는다.
+     anchor 는 서버가 준 preset 문턱(levelTaus) ↔ 위 RM. 낮은 문턱 = 큰 원. */
+  const TA=[[+S.levelTaus["-1"],RM["-1"]],[+S.levelTaus["0"],RM["0"]],[+S.levelTaus["1"],RM["1"]]];
+  function rmNow(){
+    const t=S.tau;
+    if(t<=TA[0][0])return Math.min(1.4,TA[0][1]+(TA[0][0]-t)*1.2);
+    if(t>=TA[2][0])return Math.max(0.60,TA[2][1]-(t-TA[2][0])*0.9);
+    const [a,b]=t<=TA[1][0]?[TA[0],TA[1]]:[TA[1],TA[2]];
+    return a[1]+(b[1]-a[1])*(t-a[0])/(b[0]-a[0]);
+  }
   const lab=CC.length?CC.reduce((a2,b2)=>a2.n>=b2.n?a2:b2):null;
   const rings=[];
   for(const c of CC){
@@ -990,11 +1015,11 @@ function drawMap(){
     if(rad<12)continue;
     rings.push({c,rad});
     for(const l of ["-1","1"]) ring(g,c.cx,c.cy,rad*RM[l],"rgba(120,118,119,.32)",1.2,true);
-    ring(g,c.cx,c.cy,rad*RM[String(S.level)],"#00b39c",2.4,false);
+    ring(g,c.cx,c.cy,rad*rmNow(),"#00b39c",2.4,false);
     if(c===lab){
       g.font="700 11px -apple-system,sans-serif";
       g.fillStyle="#00907e";
-      const r0=rad*RM[String(S.level)];
+      const r0=rad*rmNow();
       g.fillText("지금 기준",Math.min(Math.max(4,c.cx+r0*.72+4),w-64),
                  Math.min(Math.max(12,c.cy-r0*.72),h-6));
       g.font="10px -apple-system,sans-serif";g.fillStyle="rgba(140,138,139,.95)";
@@ -1034,7 +1059,7 @@ function drawMap(){
   if(last&&now-last.t<7000){
     const [X,Y]=W(...MP(last.x,last.y));
     let inside=false;
-    for(const r of rings) if(Math.hypot(X-r.c.cx,Y-r.c.cy)<=r.rad*RM[String(S.level)])inside=true;
+    for(const r of rings) if(Math.hypot(X-r.c.cx,Y-r.c.cy)<=r.rad*rmNow())inside=true;
     const l1="★ 방금 잡은 소리";
     const l2=inside?"기존 체결음 무리 안에 들어왔다":"무리 밖 — 새로운 소리";
     g.font="700 11.5px -apple-system,sans-serif";

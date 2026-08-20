@@ -61,6 +61,16 @@ class ClickCounter:
         self.tau_on = C.LEVEL_TAU_ON.get(int(level), C.TAU_ON)
         self._on = 0                           # 새 문턱으로 다시 세게 한다
 
+    def set_tau(self, tau: float):
+        """연속 slider 용 — tau_on 하나만 움직인다 (현장 임시 조절, 2026-08-20).
+
+        우리 fixture 로는 문턱을 정할 수 없어(0.30~0.995 전 구간 동일 결과) 현장에서
+        직접 찾게 한다. tau_off/min_on 은 고정 — tau_off 를 올리면 같은 소리가
+        release→재카운트되고, min_on 은 duration gate 가 아니다(config 주석 참조).
+        """
+        self.tau_on = min(0.995, max(0.05, float(tau)))
+        self._on = 0
+
     def push(self, probs):
         """window 확률 → 이번에 새로 발생한 이벤트 dict 또는 None.
 

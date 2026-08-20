@@ -250,7 +250,8 @@ def serve(args):
                 "model": {"version": eng.version, "folds": eng.folds,
                           "p95_ms": round(eng.p95_ms, 1)},
                 "levels": {str(k): C.LEVEL_NAMES[k] for k in C.LEVELS},
-                "level": eng.level, "hop": C.HOP_S,
+                "level_taus": {str(k): C.LEVEL_TAU_ON[k] for k in C.LEVELS},
+                "level": eng.level, "tau": ctrl.counter.tau_on, "hop": C.HOP_S,
                 "paused": ctrl.paused, "detect_on": ctrl.detect_on,
                 "counter": ctrl.counter.state(),
                 "last_freeze": ctrl.last_freeze,
@@ -284,6 +285,8 @@ def serve(args):
                                     "count_rev": ctrl.count_rev})
                 elif cmd == "dial":
                     ctrl.req_dial(int(m.get("level", 0)))
+                elif cmd == "tau":             # 연속 slider (현장 임시 문턱 조절)
+                    ctrl.req_tau(float(m.get("tau", C.TAU_ON)))
                 elif cmd == "device" and args.source == "mic":
                     idx = int(m.get("index", -1))
 

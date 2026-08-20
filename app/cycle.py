@@ -189,6 +189,9 @@ class CycleController(threading.Thread):
     def req_dial(self, level):
         self._reqs.put(("dial", level))
 
+    def req_tau(self, tau):
+        self._reqs.put(("tau", tau))
+
     def req_source_switch(self):
         """입력 장치 전환 후 — 옛/새 소리가 섞인 구간을 버리고 새 귀·새 기준으로.
 
@@ -276,6 +279,8 @@ class CycleController(threading.Thread):
                     self._manual_snapshot(*arg)
                 elif cmd == "dial":
                     self._switch_level(int(arg))
+                elif cmd == "tau":
+                    self._switch_tau(float(arg))
                 elif cmd == "source_switch":
                     try:
                         while True:
@@ -298,7 +303,17 @@ class CycleController(threading.Thread):
         self.counter.set_level(lvl)            # 실제 판정 문턱은 카운터의 tau_on
         self.epoch += 1                        # 이전 기준의 미완 snapshot 무효화
         self._pending_snap = None
-        self.emit({"type": "dial", "level": lvl,
+        self.emit({"type": "dial", "level": lvl, "tau": self.counter.tau_on,
+                   "counter": self.counter.state()})
+
+    def _switch_tau(self, tau):
+        """slider — 문턱만 바꾼다. 3단 preset 과 정확히 같으면 그 level 로 표시한다."""
+        self.counter.set_tau(tau)
+        self.epoch += 1                        # 이전 기준의 미완 snapshot 무효화
+        self._pending_snap = None
+        lvl = next((k for k, v in C.LEVEL_TAU_ON.items()
+                    if abs(v - self.counter.tau_on) < 1e-9), None)
+        self.emit({"type": "dial", "level": lvl, "tau": self.counter.tau_on,
                    "counter": self.counter.state()})
 
     def _reset_listen(self):
@@ -516,6 +531,7 @@ class CycleController(threading.Thread):
                 "click_total": self.click_total, "floor_db": round(floor, 1),
                 "level_db": round(latest, 1), "snr_db": round(max(0.0, latest - floor), 1),
                 "density": len(self._onsets), "level": self.eng.level,
+                "tau": round(self.counter.tau_on, 3),
                 "qdepth": self.q.qsize(),
                 "starved_s": round(time.time() - self._last_win, 1),
                 "src_alive": bool(self.src and getattr(self.src, "is_alive", lambda: True)()),
